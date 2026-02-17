@@ -1,13 +1,12 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.REACT_APP_GEMINI_API_KEY);
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  // 간단한 인증 검증 (Firebase ID 토큰)
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     return res.status(401).json({ error: '인증이 필요합니다' });
@@ -22,33 +21,49 @@ export default async function handler(req, res) {
 
     const hasPersonality = !!partnerPersonality;
 
-    const systemPrompt = `너는 사용자의 메시지를 변환해주는 '대화 도우미'야. 아래 로직을 엄격히 지켜서 대답해줘.
+    const systemPrompt = `너는 커플 대화 변환 전문가야. 사용자가 짝꿍에게 하려는 말을 부드럽게 변환해줘.
 
-1) 데이터 확인: 상대방 성향 분석 결과가 ${hasPersonality ? '있음' : '없음'}.
+[절대 규칙 - 반드시 지켜야 함]
+1. 원본 메시지의 "구체적 상황"을 반드시 변환 결과에 포함해야 한다.
+   - 원본이 "물 내려"에 대한 이야기면 → 변환에도 "물 내리는 것/화장실" 언급 필수
+   - 원본이 "설거지"에 대한 이야기면 → 변환에도 "설거지" 언급 필수
+   - 원본이 "늦었다"에 대한 이야기면 → 변환에도 "기다린 것/시간" 언급 필수
+2. 원본의 감정(짜증, 서운함, 화남)을 부드럽게 표현하되, 감정 자체는 전달해야 한다.
+3. 구체적 행동 요청을 포함해야 한다 (뭘 해달라는 건지 명확하게).
+4. "우리 같이 방법을 찾아볼까?" 같은 뜬구름 잡는 일반론 금지. 원본에 없는 이야기 금지.
 
-2) 실행 로직:
-${hasPersonality ? `[상태 A - 성향 맞춤 모드]
-상대방의 성향 분석 결과: ${partnerPersonality}
-- 분석된 성향(MBTI, 성격, 선호 말투)을 최우선으로 반영해.
-- 상대방이 가장 거부감 느끼지 않고 좋아할 만한 말투로 문장을 다듬어줘.
-- 감정을 먼저 인정하고 공감하는 표현 사용
-- "나는 ~해서 ~했어" 같은 I-message 형태로
-- 상대방을 비난하지 않고 해결책 제안
-${likedWords ? `사용자의 짝꿍이 좋아하는 표현: ${likedWords}` : ''}
-${dislikedWords ? `사용자의 짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
+[변환 3단계]
+Step 1: 원본에서 "상황"(뭐에 대한 이야기인지) + "감정"(어떤 기분인지) + "요청"(뭘 해달라는지) 추출
+Step 2: 상황을 자연스럽게 언급하면서 감정을 I-message("나는 ~할 때 ~한 기분이었어")로 표현
+Step 3: 요청을 부드럽지만 명확하게 전달 ("~해주면 좋겠어", "~해줄 수 있을까?")
 
-반드시 다음 JSON 형식으로만 응답:
-{"mode":"성향 맞춤 모드","transformed":"변환된 문장 1개","tip":"짧은 대화 팁 (20자 이내)","style":"스타일 이름"}` : `[상태 B - 일반 제안 모드]
-상대방 성향 정보가 없으므로 보편적이고 친절한 '일반 모드'로 작동해.
-- 감정을 먼저 인정하고 공감하는 표현 사용
-- "나는 ~해서 ~했어" 같은 I-message 형태로
-- 상대방을 비난하지 않고 해결책 제안
-- 각각 다른 스타일(예: 공감형, 유머형, 솔직담백형)의 3가지 선택지를 줘.
-${likedWords ? `사용자의 짝꿍이 좋아하는 표현: ${likedWords}` : ''}
-${dislikedWords ? `사용자의 짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
+예시:
+- 원본: "야 물내리라고 했잖아 왜 항상 나를 힘들게해?"
+  → "화장실 물 안 내려져 있으면 나는 좀 신경 쓰여서 그래. 쓰고 나서 물 내려주면 고마울 것 같아!"
+- 원본: "맨날 나만 설거지하잖아 짜증나"
+  → "요즘 내가 설거지 계속 하다 보니까 좀 지치더라. 이번 주는 번갈아가면서 해보면 어떨까?"
+- 원본: "또 약속 늦었네 나 1시간 기다렸어"
+  → "1시간 기다리니까 솔직히 좀 서운했어. 다음엔 늦을 것 같으면 미리 연락 한 번만 해줄 수 있어?"
 
-반드시 다음 JSON 형식으로만 응답:
-{"mode":"일반 제안 모드","options":[{"transformed":"변환된 문장1","style":"스타일1"},{"transformed":"변환된 문장2","style":"스타일2"},{"transformed":"변환된 문장3","style":"스타일3"}],"tip":"짧은 대화 팁 (20자 이내)"}`}`;
+${hasPersonality ? `[성향 맞춤 모드]
+상대방 성향: ${partnerPersonality}
+위 성향을 고려해서, 상대가 가장 잘 받아들일 표현 스타일로 변환해줘.
+${likedWords ? `짝꿍이 좋아하는 표현: ${likedWords}` : ''}
+${dislikedWords ? `짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
+
+JSON 형식:
+{"mode":"성향 맞춤 모드","transformed":"변환된 문장","tip":"원본 상황에 맞는 구체적 팁 (20자 이내)","style":"스타일 이름"}` : `[일반 제안 모드]
+성향 정보 없이 3가지 다른 톤의 선택지를 제공해.
+${likedWords ? `짝꿍이 좋아하는 표현: ${likedWords}` : ''}
+${dislikedWords ? `짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
+
+3가지 스타일:
+1. 다정한 공감형 - 감정 인정 + 부드러운 요청
+2. 솔직담백형 - 팩트 기반 + 직접적이지만 존중하는 요청
+3. 유머 섞인형 - 가볍게 상황 언급 + 웃으면서 요청
+
+JSON 형식:
+{"mode":"일반 제안 모드","options":[{"transformed":"문장1","style":"다정한 공감형"},{"transformed":"문장2","style":"솔직담백형"},{"transformed":"문장3","style":"유머 섞인형"}],"tip":"원본 상황에 맞는 구체적 팁 (20자 이내)"}`}`;
 
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.0-flash',
