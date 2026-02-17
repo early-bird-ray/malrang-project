@@ -31,8 +31,11 @@ service cloud.firestore {
       allow update: if isOwner(uid)
         // grapePoints는 0 이상이어야 함
         && request.resource.data.grapePoints >= 0
-        // totalGrapesEarned는 감소 불가
-        && request.resource.data.totalGrapesEarned >= resource.data.totalGrapesEarned;
+        // totalGrapesEarned는 감소 불가 (필드 없는 초기 상태 허용)
+        && (
+          !('totalGrapesEarned' in resource.data)
+          || request.resource.data.totalGrapesEarned >= resource.data.totalGrapesEarned
+        );
       allow delete: if false; // 삭제 불가
 
       // 개인 감정 기록

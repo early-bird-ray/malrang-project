@@ -12,6 +12,7 @@ import { earnGrapes, spendGrapes, createGrapeBoard, updateGrapeBoard, updateGrap
 import { saveAiTransformEntry, updateUserData, generateUniqueInviteCode, registerInviteCode, saveMoodEntry } from "./services/userService";
 import { createCoupon, sendCoupon, useCoupon as markCouponUsed, undoUseCoupon, updateCoupon, deleteCoupon, createShopListing, deleteShopListing } from "./services/couponService";
 import { createPair } from "./services/pairService";
+import { createPraise } from "./services/praiseService";
 import { subscribeToUser, subscribeToMoodHistory, subscribeToAiTransformHistory } from "./services/listenerService";
 import { setupCoupleListeners, teardownCoupleListeners } from "./services/listenerService";
 
@@ -1030,7 +1031,11 @@ export default function MallangApp() {
         }));
         setMyCoupons(mapped);
       },
-      onPraisesUpdate: (praises) => setPraiseLog(praises),
+      onPraisesUpdate: (praises) => setPraiseLog(praises.map(p => ({
+        ...p,
+        from: p.fromUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
+        date: p.createdAt ? new Date(p.createdAt).toLocaleDateString("ko-KR", { month: "long", day: "numeric" }) : p.date,
+      }))),
       onChoresUpdate: (choreList) => setChores(choreList),
       onShopListingsUpdate: (listings) => setShopCoupons(listings),
     });
@@ -1114,31 +1119,39 @@ export default function MallangApp() {
     }
   }, [screen, user.name, authLoading]);
 
+  // 로컬 시간 기준 오늘 날짜 (YYYY-MM-DD, UTC 아닌 사용자 시간대)
+  const getLocalToday = () => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  };
+
   // 하루 한 번 기분 팝업 (메인 화면 진입 시)
-  // localStorage에 오늘 날짜 기분 선택 여부 저장하여 새로고침/재로그인에도 유지
+  // moodPopupShownRef에 날짜를 저장하여 날짜 변경 감지 가능
   useEffect(() => {
-    if (screen === "main" && !moodPopupShownRef.current) {
-      const timer = setTimeout(() => {
-        const today = new Date().toISOString().split('T')[0];
-        // 1. localStorage에서 빠르게 체크 (Firestore 로딩 전에도 동작)
-        const savedMoodDate = localStorage.getItem("mallang_lastMoodDate");
-        if (savedMoodDate === today) {
-          moodPopupShownRef.current = true;
-          return;
-        }
-        // 2. moodHistory(Firestore/로컬) 체크
-        const todayMood = moodHistory.find(m => m.date === today);
-        if (todayMood) {
-          localStorage.setItem("mallang_lastMoodDate", today);
-          moodPopupShownRef.current = true;
-          return;
-        }
-        // 3. 오늘 기분 없으면 팝업
-        setShowMoodPopup(true);
-        moodPopupShownRef.current = true;
-      }, 1500);
-      return () => clearTimeout(timer);
-    }
+    if (screen !== "main") return;
+    const today = getLocalToday();
+    // ref에 오늘 날짜가 이미 저장되어 있으면 이미 처리된 것
+    if (moodPopupShownRef.current === today) return;
+
+    const timer = setTimeout(() => {
+      // 1. localStorage 체크
+      const savedMoodDate = localStorage.getItem("mallang_lastMoodDate");
+      if (savedMoodDate === today) {
+        moodPopupShownRef.current = today;
+        return;
+      }
+      // 2. moodHistory 체크
+      const todayMood = moodHistory.find(m => m.date === today);
+      if (todayMood) {
+        localStorage.setItem("mallang_lastMoodDate", today);
+        moodPopupShownRef.current = today;
+        return;
+      }
+      // 3. 오늘 기분 없으면 팝업
+      setShowMoodPopup(true);
+      moodPopupShownRef.current = today;
+    }, 1500);
+    return () => clearTimeout(timer);
   }, [screen, moodHistory]);
 
   // localStorage 저장 (데이터 변경 시)
@@ -1262,14 +1275,27 @@ export default function MallangApp() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        system_instruction: { parts: [{ text: systemPrompt }] },
+        systemInstruction: { parts: [{ text: systemPrompt }] },
         contents: [{ parts: [{ text: userPrompt }] }],
         generationConfig: { temperature: 0.7, responseMimeType: 'application/json' },
       }),
     });
-    if (!res.ok) throw new Error(`Gemini API error: ${res.status}`);
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '');
+      console.error('Gemini API error:', res.status, errBody);
+      throw new Error(`Gemini API error: ${res.status}`);
+    }
     const data = await res.json();
-    return JSON.parse(data.candidates[0].content.parts[0].text);
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) throw new Error('Gemini 응답이 비어있습니다');
+    try {
+      return JSON.parse(text);
+    } catch {
+      // JSON이 코드블록으로 감싸진 경우 처리
+      const jsonMatch = text.match(/```json?\s*([\s\S]*?)```/);
+      if (jsonMatch) return JSON.parse(jsonMatch[1].trim());
+      throw new Error('Gemini 응답 파싱 실패');
+    }
   };
 
   const handleConflictSubmit = async () => {
@@ -1382,20 +1408,28 @@ JSON 형식:
     }));
   };
 
-  const sendPraise = () => {
+  const sendPraise = async () => {
     if (!praiseText.trim()) return;
     if (!user.partnerConnected) {
       setPartnerRequiredAction("praise");
       setShowPartnerRequiredPopup(true);
       return;
     }
-    const newPraise = {
-      id: Date.now(),
-      from: user.name || "나",
-      message: praiseText.trim(),
-      date: new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric" }),
-    };
-    setPraiseLog(prev => [newPraise, ...prev]);
+    const coupleId = user.coupleId;
+    if (coupleId && authUser && user.partnerUid) {
+      // Firestore 저장 → 리스너가 자동으로 praiseLog 업데이트
+      const { error } = await createPraise(coupleId, authUser.uid, user.partnerUid, praiseText.trim(), 3);
+      if (error) { showToast(error, "error"); return; }
+    } else {
+      // 솔로 모드 fallback
+      const newPraise = {
+        id: Date.now(),
+        from: user.name || "나",
+        message: praiseText.trim(),
+        date: new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric" }),
+      };
+      setPraiseLog(prev => [newPraise, ...prev]);
+    }
     setHearts(h => h + 1);
     showToast(`${partnerDisplayName}님에게 칭찬을 보냈어요! 💜 하트 +1`);
     setPraiseText("");
@@ -3894,20 +3928,20 @@ JSON 형식:
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
               <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>😊 이번 달 기분 기록</h3>
               {(() => {
-                const today = new Date().toISOString().split('T')[0];
-                const todayDone = moodHistory.some(m => m.date === today);
+                const today = getLocalToday();
+                const todayMood = moodHistory.find(m => m.date === today);
                 return (
-                  <button onClick={() => !todayDone && setShowMoodPopup(true)} style={{
-                    background: todayDone ? "#F3F4F6" : colors.primaryLight, border: "none", borderRadius: 8,
+                  <button onClick={() => setShowMoodPopup(true)} style={{
+                    background: todayMood ? "#F3F4F6" : colors.primaryLight, border: "none", borderRadius: 8,
                     padding: "6px 12px", fontSize: 11, fontWeight: 600,
-                    color: todayDone ? colors.textTertiary : colors.primary,
-                    cursor: todayDone ? "default" : "pointer",
-                  }}>{todayDone ? "오늘 기록 완료 ✅" : "오늘 기분 기록"}</button>
+                    color: todayMood ? colors.textSecondary : colors.primary,
+                    cursor: "pointer",
+                  }}>{todayMood ? `${todayMood.emoji} 오늘 기분 수정` : "오늘 기분 기록"}</button>
                 );
               })()}
             </div>
             {(() => {
-              const currentMonth = new Date().toISOString().substring(0, 7);
+              const currentMonth = getLocalToday().substring(0, 7);
               const monthMoods = moodHistory.filter(m => m.date.startsWith(currentMonth));
               const moodCounts = monthMoods.reduce((acc, m) => {
                 acc[m.mood] = (acc[m.mood] || 0) + 1;
@@ -6050,7 +6084,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
                 { emoji: "😤", label: "화나요", value: "angry" },
               ].map(mood => (
                 <button key={mood.value} onClick={async () => {
-                  const today = new Date().toISOString().split('T')[0];
+                  const today = getLocalToday();
                   const moodEntry = {
                     date: today,
                     mood: mood.value,
@@ -6059,7 +6093,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
                   };
                   setMoodHistory(prev => [...prev.filter(m => m.date !== today), moodEntry]);
                   localStorage.setItem("mallang_lastMoodDate", today);
-                  moodPopupShownRef.current = true;
+                  moodPopupShownRef.current = today;
                   setShowMoodPopup(false);
                   showToast(`오늘 기분: ${mood.emoji} ${mood.label}`);
                   if (authUser) {
