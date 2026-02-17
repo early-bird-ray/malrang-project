@@ -1,8 +1,6 @@
-const OpenAI = require('openai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -16,8 +14,6 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Firebase Admin을 통한 토큰 검증 (선택적)
-    // 클라이언트에서 보내는 토큰을 신뢰하되, 서버에서 OpenAI 키 보호가 주 목적
     const { text, likedWords, dislikedWords } = req.body;
 
     if (!text || !text.trim()) {
@@ -36,19 +32,20 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
 반드시 다음 JSON 형식으로만 응답하세요:
 {"transformed": "변환된 문장", "tip": "짧은 대화 팁 (20자 이내)", "style": "스타일 이름 (예: 차분한 공감형)"}`;
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: text },
-      ],
-      temperature: 0.7,
-      response_format: { type: 'json_object' },
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      systemInstruction: systemPrompt,
+      generationConfig: {
+        temperature: 0.7,
+        responseMimeType: 'application/json',
+      },
     });
 
-    const result = JSON.parse(completion.choices[0].message.content);
+    const result = await model.generateContent(text);
+    const responseText = result.response.text();
+    const parsed = JSON.parse(responseText);
 
-    return res.status(200).json(result);
+    return res.status(200).json(parsed);
   } catch (error) {
     console.error('Transform API error:', error);
     return res.status(500).json({

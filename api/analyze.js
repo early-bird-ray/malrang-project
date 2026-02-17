@@ -1,4 +1,4 @@
-const OpenAI = require('openai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const formidable = require('formidable');
 const fs = require('fs');
 
@@ -8,9 +8,7 @@ export const config = {
   },
 };
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -33,19 +31,12 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'No audio file provided' });
     }
 
-    // Step 1: Transcribe audio using Whisper
-    const transcription = await openai.audio.transcriptions.create({
-      file: fs.createReadStream(audioFile.filepath),
-      model: 'whisper-1',
-      language: 'ko',
-      response_format: 'text',
-    });
+    // 오디오 파일을 base64로 변환
+    const audioBuffer = fs.readFileSync(audioFile.filepath);
+    const audioBase64 = audioBuffer.toString('base64');
+    const mimeType = audioFile.mimetype || 'audio/webm';
 
-    // Step 2: Analyze the conversation using GPT
-    const analysisPrompt = `당신은 커플 대화 분석 전문가입니다. 아래 대화 내용을 분석해주세요.
-
-대화 내용:
-${transcription}
+    const analysisPrompt = `당신은 커플 대화 분석 전문가입니다. 이 오디오 파일에 담긴 대화 내용을 먼저 인식(음성→텍스트)한 뒤 분석해주세요.
 
 다음 JSON 형식으로 분석 결과를 반환해주세요:
 
@@ -76,17 +67,27 @@ ${transcription}
 대화에서 화자를 구분할 수 없는 경우, 문맥과 어조를 바탕으로 A와 B를 추론해주세요.
 반드시 유효한 JSON만 반환하고, 다른 텍스트는 포함하지 마세요.`;
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: '당신은 커플 대화 분석 전문 상담사입니다. 따뜻하고 건설적인 피드백을 제공합니다.' },
-        { role: 'user', content: analysisPrompt }
-      ],
-      temperature: 0.7,
-      response_format: { type: 'json_object' },
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      systemInstruction: '당신은 커플 대화 분석 전문 상담사입니다. 따뜻하고 건설적인 피드백을 제공합니다.',
+      generationConfig: {
+        temperature: 0.7,
+        responseMimeType: 'application/json',
+      },
     });
 
-    const analysisResult = JSON.parse(completion.choices[0].message.content);
+    const result = await model.generateContent([
+      { text: analysisPrompt },
+      {
+        inlineData: {
+          mimeType,
+          data: audioBase64,
+        },
+      },
+    ]);
+
+    const responseText = result.response.text();
+    const analysisResult = JSON.parse(responseText);
 
     // Add duration (estimated from file)
     analysisResult.duration = "분석 완료";

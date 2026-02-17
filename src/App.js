@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Heart, MessageCircle, Home, BarChart3,
   ChevronRight, ChevronLeft, Copy, Share2, Check, X, Plus,
@@ -8,10 +8,11 @@ import {
   Trash2, LogOut
 } from "lucide-react";
 import { signInWithGoogle, logOut, onAuthChange, saveUserData, getUserData } from "./firebase";
-import { earnGrapes, spendGrapes } from "./services/grapeService";
-import { saveAiTransformEntry, updateUserData, generateUniqueInviteCode, registerInviteCode } from "./services/userService";
+import { earnGrapes, spendGrapes, createGrapeBoard, updateGrapeBoard, updateGrapeBoardProgress, deleteGrapeBoard } from "./services/grapeService";
+import { saveAiTransformEntry, updateUserData, generateUniqueInviteCode, registerInviteCode, saveMoodEntry } from "./services/userService";
+import { createCoupon, sendCoupon, useCoupon as markCouponUsed, undoUseCoupon, updateCoupon, deleteCoupon, createShopListing, deleteShopListing } from "./services/couponService";
 import { createPair } from "./services/pairService";
-import { subscribeToUser } from "./services/listenerService";
+import { subscribeToUser, subscribeToMoodHistory } from "./services/listenerService";
 import { setupCoupleListeners, teardownCoupleListeners } from "./services/listenerService";
 
 
@@ -747,13 +748,16 @@ export default function MallangApp() {
   const [lang, setLang] = useState("ko");
   const t = (key) => (i18n[key] && i18n[key][lang]) || (i18n[key] && i18n[key]["ko"]) || key;
 
-  const [tab, setTab] = useState("home");
+  const [tab, setTab] = useState(() => {
+    try { const s = localStorage.getItem("mallang_tab"); if (s && ["home","grape","shop","coupon","report"].includes(s)) return s; } catch {} return "home";
+  });
   const [toast, setToast] = useState({ visible: false, message: "", type: "success" });
   const [user, setUser] = useState(() => loadFromStorage("user", MOCK_USER));
 
   // 오늘의 기분 관련 state
   const [showMoodPopup, setShowMoodPopup] = useState(false);
   const [moodHistory, setMoodHistory] = useState(() => loadFromStorage("moodHistory", []));
+  const moodPopupShownRef = useRef(false);
   const [welcomeName, setWelcomeName] = useState("");
   const [welcomePartnerCode, setWelcomePartnerCode] = useState("");
   const [showSkipCodeConfirm, setShowSkipCodeConfirm] = useState(false);
@@ -820,7 +824,9 @@ export default function MallangApp() {
   const [confirmDeleteCoupon, setConfirmDeleteCoupon] = useState(null);
   const [sentCouponFilter, setSentCouponFilter] = useState("전체");
   const [confirmSendCoupon, setConfirmSendCoupon] = useState(null);
-  const [reportSubTab, setReportSubTab] = useState("report"); // "report" | "voice"
+  const [reportSubTab, setReportSubTab] = useState(() => {
+    try { const s = localStorage.getItem("mallang_reportSubTab"); if (s && ["report","voice","judge","advanced"].includes(s)) return s; } catch {} return "report";
+  });
   const [voiceFile, setVoiceFile] = useState(null);
   const [voiceAnalyzing, setVoiceAnalyzing] = useState(false);
   const [voiceResult, setVoiceResult] = useState(null); // "전체" | "사용" | "미사용"
@@ -828,6 +834,13 @@ export default function MallangApp() {
   const [couponViewTab, setCouponViewTab] = useState("sent"); // "sent" | "received"
   const [hearts, setHearts] = useState(() => loadFromStorage("hearts", 0));
   const [confirmDeleteBoard, setConfirmDeleteBoard] = useState(null);
+  const [aiWeeklyTip, setAiWeeklyTip] = useState(null);
+  const [aiReportInsight, setAiReportInsight] = useState(null);
+  const [showPartnerRequiredPopup, setShowPartnerRequiredPopup] = useState(false);
+  const [partnerRequiredAction, setPartnerRequiredAction] = useState(""); // "praise" | "coupon"
+  const [editPraiseId, setEditPraiseId] = useState(null);
+  const [editPraiseText, setEditPraiseText] = useState("");
+  const [confirmDeletePraise, setConfirmDeletePraise] = useState(null);
 
   const showToast = (message, type = "success") => {
     setToast({ visible: true, message, type });
@@ -954,6 +967,15 @@ export default function MallangApp() {
     return () => unsubscribe();
   }, [authUser]);
 
+  // 기분 기록 실시간 구독
+  useEffect(() => {
+    if (!authUser) return;
+    const unsubscribe = subscribeToMoodHistory(authUser.uid, (moods) => {
+      setMoodHistory(moods);
+    });
+    return () => unsubscribe();
+  }, [authUser]);
+
   // 커플 데이터 실시간 구독 (커플 ID 있을 때)
   useEffect(() => {
     const coupleId = user.coupleId;
@@ -967,12 +989,20 @@ export default function MallangApp() {
             setUser(u => ({
               ...u,
               partnerName: coupleData.memberProfiles[partnerUid].displayName || '',
+              partnerUid: partnerUid,
             }));
           }
         }
       },
-      onGrapeBoardsUpdate: (boards) => setGrapeBoards(boards),
-      onCouponsUpdate: (coupons) => setMyCoupons(coupons),
+      onGrapeBoardsUpdate: (boards) => setGrapeBoards(boards.map(b => ({ ...b, current: b.progress || b.current || 0 }))),
+      onCouponsUpdate: (coupons) => {
+        const mapped = coupons.map(c => ({
+          ...c,
+          from: c.fromUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
+          to: c.toUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
+        }));
+        setMyCoupons(mapped);
+      },
       onPraisesUpdate: (praises) => setPraiseLog(praises),
       onChoresUpdate: (choreList) => setChores(choreList),
       onShopListingsUpdate: (listings) => setShopCoupons(listings),
@@ -1045,15 +1075,14 @@ export default function MallangApp() {
     }
   }, [screen, user.name, authLoading]);
 
-  // 하루 한 번 기분 팝업 (메인 화면 진입 시, Firestore 동기화 대기)
+  // 하루 한 번 기분 팝업 (메인 화면 진입 시, 세션당 1회)
   useEffect(() => {
-    if (screen === "main") {
+    if (screen === "main" && !moodPopupShownRef.current) {
       const timer = setTimeout(() => {
         const today = new Date().toISOString().split('T')[0];
         const todayMood = moodHistory.find(m => m.date === today);
-        if (!todayMood) {
-          setShowMoodPopup(true);
-        }
+        if (!todayMood) setShowMoodPopup(true);
+        moodPopupShownRef.current = true;
       }, 1500);
       return () => clearTimeout(timer);
     }
@@ -1100,6 +1129,14 @@ export default function MallangApp() {
     localStorage.setItem("mallang_surveyAnswers", JSON.stringify(savedSurveyAnswers));
   }, [savedSurveyAnswers]);
 
+  useEffect(() => {
+    localStorage.setItem("mallang_tab", tab);
+  }, [tab]);
+
+  useEffect(() => {
+    localStorage.setItem("mallang_reportSubTab", reportSubTab);
+  }, [reportSubTab]);
+
   // 탭/서브탭 변경 시 스크롤 초기화
   useEffect(() => { window.scrollTo(0, 0); }, [tab, reportSubTab]);
 
@@ -1120,6 +1157,17 @@ export default function MallangApp() {
       if (showAddTodo) { setShowAddTodo(false); return; }
       if (showConflictInput) { setShowConflictInput(false); return; }
       if (showConversationHistory) { setShowConversationHistory(false); return; }
+      if (showAdModal) { setShowAdModal(false); setAdWatching(false); setAdProgress(0); return; }
+      if (showRewardModal) { setShowRewardModal(false); return; }
+      if (showPartnerRequiredPopup) { setShowPartnerRequiredPopup(false); return; }
+      if (showSurveyPrompt) { setShowSurveyPrompt(false); return; }
+      if (confirmDeleteBoard) { setConfirmDeleteBoard(null); return; }
+      if (confirmDeleteTodo) { setConfirmDeleteTodo(null); return; }
+      if (confirmDeleteCoupon) { setConfirmDeleteCoupon(null); return; }
+      if (confirmDeleteShopCoupon) { setConfirmDeleteShopCoupon(null); return; }
+      if (confirmSendCoupon) { setConfirmSendCoupon(null); return; }
+      if (confirmDeletePraise) { setConfirmDeletePraise(null); return; }
+      if (selectedGift) { setSelectedGift(null); return; }
 
       // 메인 화면이면서 홈 탭이 아니면 홈 탭으로 이동
       if (screen === "main" && tab !== "home") {
@@ -1141,7 +1189,7 @@ export default function MallangApp() {
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [screen, tab, showExitConfirm, showSettings, showMoodPopup, showNewBoard, showCouponCreate, showAddTodo, showConflictInput, showConversationHistory]);
+  }, [screen, tab, showExitConfirm, showSettings, showMoodPopup, showNewBoard, showCouponCreate, showAddTodo, showConflictInput, showConversationHistory, showAdModal, showRewardModal, showPartnerRequiredPopup, showSurveyPrompt, confirmDeleteBoard, confirmDeleteTodo, confirmDeleteCoupon, confirmDeleteShopCoupon, confirmSendCoupon, confirmDeletePraise, selectedGift]);
 
   // Ad watching simulation timer
   useEffect(() => {
@@ -1153,23 +1201,22 @@ export default function MallangApp() {
     }
   }, [adWatching, adProgress]);
 
-  // OpenAI 직접 호출 헬퍼
-  const callOpenAI = async (messages, jsonMode = true) => {
-    const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
-    if (!apiKey) throw new Error('OpenAI API 키가 설정되지 않았습니다');
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+  // Gemini 직접 호출 헬퍼
+  const callGemini = async (systemPrompt, userPrompt) => {
+    const apiKey = process.env.REACT_APP_GEMINI_API_KEY;
+    if (!apiKey) throw new Error('Gemini API 키가 설정되지 않았습니다');
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages,
-        temperature: 0.7,
-        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+        system_instruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ parts: [{ text: userPrompt }] }],
+        generationConfig: { temperature: 0.7, responseMimeType: 'application/json' },
       }),
     });
-    if (!res.ok) throw new Error(`OpenAI API error: ${res.status}`);
+    if (!res.ok) throw new Error(`Gemini API error: ${res.status}`);
     const data = await res.json();
-    return JSON.parse(data.choices[0].message.content);
+    return JSON.parse(data.candidates[0].content.parts[0].text);
   };
 
   const handleConflictSubmit = async () => {
@@ -1190,7 +1237,7 @@ export default function MallangApp() {
         if (!response.ok) throw new Error('서버 API 실패');
         result = await response.json();
       } catch {
-        // 직접 OpenAI 호출
+        // 직접 Gemini 호출
         const systemPrompt = `당신은 커플 대화 전문가입니다. 사용자가 하고 싶은 말을 짝꿍이 좋아하는 스타일로 부드럽게 변환해주세요.
 변환 시 다음 원칙을 따르세요:
 1. 감정을 먼저 인정하고 공감하는 표현 사용
@@ -1202,10 +1249,7 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
 
 반드시 다음 JSON 형식으로만 응답하세요:
 {"transformed": "변환된 문장", "tip": "짧은 대화 팁 (20자 이내)", "style": "스타일 이름 (예: 차분한 공감형)"}`;
-        result = await callOpenAI([
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: conflictText },
-        ]);
+        result = await callGemini(systemPrompt, conflictText);
       }
 
       const suggestion = {
@@ -1271,15 +1315,6 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
       return c;
     }));
   };
-
-  // 짝꿍 미등록 경고 팝업 상태
-  const [showPartnerRequiredPopup, setShowPartnerRequiredPopup] = useState(false);
-  const [partnerRequiredAction, setPartnerRequiredAction] = useState(""); // "praise" | "coupon"
-
-  // 칭찬 수정 상태
-  const [editPraiseId, setEditPraiseId] = useState(null);
-  const [editPraiseText, setEditPraiseText] = useState("");
-  const [confirmDeletePraise, setConfirmDeletePraise] = useState(null);
 
   const sendPraise = () => {
     if (!praiseText.trim()) return;
@@ -1379,7 +1414,7 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
           input { font-family: inherit; }
         `}</style>
         <div style={{ textAlign: "center", marginBottom: 40, display: "flex", flexDirection: "column", alignItems: "center" }}>
-          <div style={{ fontSize: 64, marginBottom: 8 }}>🍇</div>
+          <img src="/splash-logo.png" alt="말랑" width={64} height={64} style={{ marginBottom: 8 }} />
           <h1 style={{ fontSize: 28, fontWeight: 800, color: colors.primary, marginBottom: 8 }}>말랑</h1>
           <p style={{
             fontSize: 13, color: colors.textSecondary, lineHeight: 1.5,
@@ -1444,7 +1479,7 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
                 width: "90%", maxWidth: 380,
               }}>
                 <div style={{ textAlign: "center", marginBottom: 24 }}>
-                  <div style={{ fontSize: 48, marginBottom: 8 }}>🍇</div>
+                  <img src="/splash-logo.png" alt="말랑" width={48} height={48} style={{ marginBottom: 8 }} />
                   <h2 style={{ fontSize: 20, fontWeight: 800, color: colors.text, marginBottom: 4 }}>
                     프로필 설정
                   </h2>
@@ -2720,14 +2755,20 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
                     if (pct >= 100) return;
                     setAnimatingBoardId(board.id);
                     setTimeout(() => setAnimatingBoardId(null), 800);
-                    const newCurrent = Math.min(board.current + board.perSuccess, board.goal);
+                    const coupleId = user.coupleId;
+                    const newCurrent = Math.min((board.current || board.progress || 0) + board.perSuccess, board.goal);
                     const willComplete = newCurrent >= board.goal;
-                    setGrapeBoards(boards => boards.map(b =>
-                      b.id === board.id ? { ...b, current: newCurrent } : b
-                    ));
-                    if (authUser) {
-                      const { error } = await earnGrapes(authUser.uid, user.coupleId || null, board.perSuccess, 'grape_board_progress', { boardId: board.id });
-                      if (error) showToast(error, "error");
+                    if (coupleId && authUser) {
+                      const { error } = await updateGrapeBoardProgress(coupleId, board.id, authUser.uid, board.perSuccess);
+                      if (error) { showToast(error, "error"); return; }
+                    } else {
+                      setGrapeBoards(boards => boards.map(b =>
+                        b.id === board.id ? { ...b, current: newCurrent } : b
+                      ));
+                      if (authUser) {
+                        const { error } = await earnGrapes(authUser.uid, null, board.perSuccess, 'grape_board_progress', { boardId: board.id });
+                        if (error) showToast(error, "error");
+                      }
                     }
                     if (willComplete) {
                       setTimeout(() => {
@@ -2886,17 +2927,28 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
               }}>
                 취소
               </button>
-              <button onClick={() => {
+              <button onClick={async () => {
                 if (!newBoard.title.trim()) return;
+                const coupleId = user.coupleId;
                 if (editBoard) {
-                  setGrapeBoards(prev => prev.map(b =>
-                    b.id === editBoard.id
-                      ? { ...b, title: newBoard.title, goal: newBoard.goal, perSuccess: newBoard.perSuccess, owner: newBoard.owner }
-                      : b
-                  ));
+                  if (coupleId) {
+                    const { error } = await updateGrapeBoard(coupleId, editBoard.id, { title: newBoard.title, goal: newBoard.goal, perSuccess: newBoard.perSuccess, owner: newBoard.owner });
+                    if (error) { showToast(error, "error"); return; }
+                  } else {
+                    setGrapeBoards(prev => prev.map(b =>
+                      b.id === editBoard.id
+                        ? { ...b, title: newBoard.title, goal: newBoard.goal, perSuccess: newBoard.perSuccess, owner: newBoard.owner }
+                        : b
+                    ));
+                  }
                   showToast("포도판이 수정되었어요! ✏️");
                 } else {
-                  setGrapeBoards(prev => [...prev, { ...newBoard, id: Date.now(), current: 0 }]);
+                  if (coupleId) {
+                    const { error } = await createGrapeBoard(coupleId, { title: newBoard.title, goal: newBoard.goal, perSuccess: newBoard.perSuccess, owner: newBoard.owner });
+                    if (error) { showToast(error, "error"); return; }
+                  } else {
+                    setGrapeBoards(prev => [...prev, { ...newBoard, id: Date.now(), current: 0 }]);
+                  }
                   showToast("새 포도판이 만들어졌어요! 🍇");
                 }
                 setNewBoard({ title: "", goal: 20, perSuccess: 2, owner: "우리" });
@@ -3190,11 +3242,29 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
                       {coupon.status === "used" ? "사용 완료" : (daysLeft <= 0 ? "만료" : `D-${daysLeft}`)}
                     </div>
                     {coupon.status === "used" ? (
-                      <button onClick={() => { setMyCoupons(prev => prev.map(c => c.id === coupon.id ? { ...c, status: "sent" } : c)); showToast("사용 완료를 취소했어요"); }} style={{
+                      <button onClick={async () => {
+                        const coupleId = user.coupleId;
+                        if (coupleId && authUser) {
+                          const { error } = await undoUseCoupon(coupleId, coupon.id, authUser.uid);
+                          if (error) { showToast(error, "error"); return; }
+                        } else {
+                          setMyCoupons(prev => prev.map(c => c.id === coupon.id ? { ...c, status: "sent" } : c));
+                        }
+                        showToast("사용 완료를 취소했어요");
+                      }} style={{
                         padding: "5px 10px", borderRadius: 6, background: colors.mintLight, border: `1px solid ${colors.mint}40`, fontSize: 10, fontWeight: 700, color: colors.mint, cursor: "pointer",
                       }}>사용완료 취소</button>
                     ) : (
-                      <button onClick={() => { setMyCoupons(prev => prev.map(c => c.id === coupon.id ? { ...c, status: "used" } : c)); showToast("쿠폰을 사용했어요! 🎉"); }} style={{
+                      <button onClick={async () => {
+                        const coupleId = user.coupleId;
+                        if (coupleId && authUser) {
+                          const { error } = await markCouponUsed(coupleId, coupon.id, authUser.uid);
+                          if (error) { showToast(error, "error"); return; }
+                        } else {
+                          setMyCoupons(prev => prev.map(c => c.id === coupon.id ? { ...c, status: "used" } : c));
+                        }
+                        showToast("쿠폰을 사용했어요! 🎉");
+                      }} style={{
                         padding: "5px 12px", borderRadius: 6, background: `linear-gradient(135deg, ${colors.primary}, ${colors.grape})`, border: "none", fontSize: 10, fontWeight: 700, color: "#fff", cursor: "pointer",
                       }}>사용하기</button>
                     )}
@@ -3734,14 +3804,29 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
             background: colors.primaryLight, borderRadius: 14, padding: "16px",
             border: `1px solid ${colors.primary}30`,
           }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 6 }}>💡 이번 주 팁</div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary }}>💡 이번 주 팁</div>
+              {!aiWeeklyTip && process.env.REACT_APP_GEMINI_API_KEY && (
+                <button onClick={async () => {
+                  try {
+                    const tip = await callGemini(
+                      '커플 관계 전문 코치로서 한 줄 팁을 제공해주세요. 반드시 JSON 형식으로: {"tip": "팁 내용"}',
+                      `이번 주 활동: 칭찬 ${totalPraise}회, 할일 완료율 ${totalChores > 0 ? Math.round(totalChoresCompleted/totalChores*100) : 0}%, 포도판 ${grapeBoards.length}개, 쿠폰 ${myCoupons.length}개. 짝꿍 이름: ${partnerDisplayName}`
+                    );
+                    if (tip?.tip) setAiWeeklyTip(tip.tip);
+                  } catch { /* fallback to static */ }
+                }} style={{ background: "none", border: "none", fontSize: 11, color: colors.grape, cursor: "pointer", fontWeight: 600 }}>
+                  AI 팁 생성 ✨
+                </button>
+              )}
+            </div>
             <p style={{ fontSize: 12, color: colors.textSecondary, lineHeight: 1.6 }}>
-              {totalPraise < 3
+              {aiWeeklyTip || (totalPraise < 3
                 ? `칭찬을 더 자주 해보세요! ${partnerDisplayName}님에게 감사한 점을 하루 한 번 말해보는 건 어떨까요?`
                 : totalChoresCompleted < totalChores * 0.5
                   ? "할 일 완료율을 높여보세요! 작은 것부터 함께 해나가면 관계가 더 단단해져요."
                   : "좋은 흐름이에요! 서로에 대한 관심을 유지하며 쿠폰으로 마음을 표현해보세요 🎫"
-              }
+              )}
             </p>
           </div>
           {/* 심화 보고서 안내 카드 */}
@@ -4015,6 +4100,35 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
             <h3 style={{ fontSize: 20, fontWeight: 800, color: "#fff", marginBottom: 8 }}>월간 심화 보고서</h3>
             <p style={{ fontSize: 12, color: "rgba(255,255,255,0.8)" }}>
               AI가 분석한 우리 부부의 관계 인사이트
+            </p>
+          </div>
+
+          {/* AI 인사이트 요약 */}
+          <div style={{
+            background: "#fff", borderRadius: 16, padding: "16px", marginBottom: 16,
+            border: `1px solid ${colors.grape}30`,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Sparkles size={14} color={colors.grape} />
+                <span style={{ fontSize: 13, fontWeight: 700, color: colors.grape }}>AI 인사이트</span>
+              </div>
+              {!aiReportInsight && process.env.REACT_APP_GEMINI_API_KEY && (
+                <button onClick={async () => {
+                  try {
+                    const insight = await callGemini(
+                      '커플 관계 분석 전문가로서 월간 데이터를 기반으로 1-2문장 인사이트를 제공해주세요. 반드시 JSON: {"insight": "인사이트 내용"}',
+                      `${selectedReportMonth} 월간 데이터: 대화변환 ${conversationHistory.filter(i => i.timestamp?.startsWith(selectedReportMonth)).length}회, 칭찬 ${praiseLog.length}회, 포도판 ${grapeBoards.length}개, 쿠폰 ${myCoupons.length}개`
+                    );
+                    if (insight?.insight) setAiReportInsight(insight.insight);
+                  } catch { /* fallback */ }
+                }} style={{ background: colors.grape, color: "#fff", border: "none", borderRadius: 8, padding: "4px 10px", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+                  생성하기
+                </button>
+              )}
+            </div>
+            <p style={{ fontSize: 12, color: colors.textSecondary, lineHeight: 1.6, margin: 0 }}>
+              {aiReportInsight || "AI 인사이트를 생성하면 이번 달 활동을 종합 분석해드려요."}
             </p>
           </div>
 
@@ -4424,36 +4538,35 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
                       if (!response.ok) throw new Error('서버 API 실패');
                       result = await response.json();
                     } catch {
-                      // 직접 OpenAI Whisper + GPT 호출
-                      const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
+                      // 직접 Gemini 멀티모달 호출 (음성→분석 한 번에)
+                      const apiKey = process.env.REACT_APP_GEMINI_API_KEY;
                       if (!apiKey) throw new Error('API 키 없음');
 
-                      // Step 1: Whisper 음성 인식
-                      const whisperForm = new FormData();
-                      whisperForm.append('file', voiceFile);
-                      whisperForm.append('model', 'whisper-1');
-                      whisperForm.append('language', 'ko');
-                      whisperForm.append('response_format', 'text');
-                      const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${apiKey}` },
-                        body: whisperForm,
-                      });
-                      if (!whisperRes.ok) throw new Error('음성 인식 실패');
-                      const transcription = await whisperRes.text();
+                      // 오디오 파일을 base64로 변환
+                      const audioBuffer = await voiceFile.arrayBuffer();
+                      const audioBase64 = btoa(String.fromCharCode(...new Uint8Array(audioBuffer)));
+                      const mimeType = voiceFile.type || 'audio/webm';
 
-                      // Step 2: GPT 분석
-                      const analysisPrompt = `당신은 커플 대화 분석 전문가입니다. 아래 대화 내용을 분석해주세요.
-
-대화 내용:
-${transcription}
+                      const analysisPrompt = `당신은 커플 대화 분석 전문가입니다. 이 오디오 파일의 대화 내용을 인식하고 분석해주세요.
 
 다음 JSON 형식으로 분석 결과를 반환해주세요:
-{"topic":"전체 대화 주제 (20자 이내)","moodSummary":"대화 분위기 요약 (2-3문장)","conflictContribution":{"A":숫자,"B":숫자,"interpretation":"갈등 기여도 해석"},"personality":{"A":{"type":"성향 타입","desc":"설명"},"B":{"type":"성향 타입","desc":"설명"}},"goodPoints":{"A":["잘한 점"],"B":["잘한 점"]},"improvements":{"A":["개선 포인트"],"B":["개선 포인트"]},"actionSentences":["실천 문장 1","실천 문장 2"],"tone":{"positive":숫자,"neutral":숫자,"negative":숫자}}`;
-                      result = await callOpenAI([
-                        { role: 'system', content: '당신은 커플 대화 분석 전문 상담사입니다.' },
-                        { role: 'user', content: analysisPrompt },
-                      ]);
+{"topic":"전체 대화 주제 (20자 이내)","moodSummary":"대화 분위기 요약 (2-3문장)","conflictContribution":{"A":0-100,"B":0-100,"interpretation":"갈등 기여도 해석"},"personality":{"A":{"type":"성향 타입","desc":"설명"},"B":{"type":"성향 타입","desc":"설명"}},"goodPoints":{"A":["잘한 점"],"B":["잘한 점"]},"improvements":{"A":["개선 포인트"],"B":["개선 포인트"]},"actionSentences":["실천 문장 1","실천 문장 2"],"tone":{"positive":0-100,"neutral":0-100,"negative":0-100}}`;
+
+                      const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          system_instruction: { parts: [{ text: '당신은 커플 대화 분석 전문 상담사입니다.' }] },
+                          contents: [{ parts: [
+                            { text: analysisPrompt },
+                            { inlineData: { mimeType, data: audioBase64 } },
+                          ] }],
+                          generationConfig: { temperature: 0.7, responseMimeType: 'application/json' },
+                        }),
+                      });
+                      if (!geminiRes.ok) throw new Error('Gemini API 실패');
+                      const geminiData = await geminiRes.json();
+                      result = JSON.parse(geminiData.candidates[0].content.parts[0].text);
                       result.duration = "분석 완료";
                     }
                     setVoiceResult(result);
@@ -4745,7 +4858,7 @@ ${transcription}
                           if (!response.ok) throw new Error('서버 API 실패');
                           result = await response.json();
                         } catch {
-                          // 직접 OpenAI 호출
+                          // 직접 Gemini 호출
                           const systemPrompt = `너는 갈등을 중재하는 상담가가 아니라, 행동 기반으로 책임 비율을 판정하는 심판 AI다.
 
 A는 상황을 작성한 사람, B는 상대방이다.
@@ -4786,10 +4899,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
   "aPhrases": ["A가 먼저 건넬 수 있는 화해 문장 1", "문장 2", "문장 3"],
   "bPhrases": ["B가 먼저 건넬 수 있는 화해 문장 1", "문장 2", "문장 3"]
 }`;
-                          result = await callOpenAI([
-                            { role: 'system', content: systemPrompt },
-                            { role: 'user', content: judgeText },
-                          ]);
+                          result = await callGemini(systemPrompt, judgeText);
                         }
                         setJudgeResult(result);
                       } catch (error) {
@@ -5304,16 +5414,13 @@ A는 상황을 작성한 사람, B는 상대방이다.
                   <div>
                     <label style={{ fontSize: 12, color: colors.textSecondary, display: "block", marginBottom: 4 }}>짝꿍 이름</label>
                     {user.partnerConnected ? (
-                      <input
-                        type="text"
-                        value={user.partnerName}
-                        onChange={e => setUser(u => ({ ...u, partnerName: e.target.value }))}
-                        style={{
-                          width: "100%", padding: "10px 12px", borderRadius: 10,
-                          border: `1.5px solid ${colors.border}`, fontSize: 14, fontWeight: 600,
-                          outline: "none", boxSizing: "border-box",
-                        }}
-                      />
+                      <div style={{
+                        padding: "10px 12px", borderRadius: 10,
+                        border: `1.5px solid ${colors.border}`, fontSize: 14, fontWeight: 600,
+                        background: "#F9FAFB", color: colors.text,
+                      }}>
+                        {user.partnerName || "짝꿍"}
+                      </div>
                     ) : (
                       <div style={{
                         padding: "10px 12px", borderRadius: 10,
@@ -5557,9 +5664,15 @@ A는 상황을 작성한 사람, B는 상대방이다.
                 padding: "14px 12px", borderRadius: 12, background: "#F3F4F6", color: colors.textSecondary, border: "none", fontSize: 14, fontWeight: 600, cursor: "pointer",
               }}>취소</button>
               {editCouponId ? (
-                <button onClick={() => {
+                <button onClick={async () => {
                   if (!newCoupon.title.trim() || !newCoupon.expiry) return;
-                  setMyCoupons(prev => prev.map(c => c.id === editCouponId ? { ...c, title: newCoupon.title, desc: newCoupon.desc || "", expiry: newCoupon.expiry } : c));
+                  const coupleId = user.coupleId;
+                  if (coupleId && authUser) {
+                    const { error } = await updateCoupon(coupleId, editCouponId, authUser.uid, { title: newCoupon.title, desc: newCoupon.desc || "", expiry: newCoupon.expiry });
+                    if (error) { showToast(error, "error"); return; }
+                  } else {
+                    setMyCoupons(prev => prev.map(c => c.id === editCouponId ? { ...c, title: newCoupon.title, desc: newCoupon.desc || "", expiry: newCoupon.expiry } : c));
+                  }
                   showToast("쿠폰이 수정되었어요! ✏️");
                   setNewCoupon({ title: "", desc: "", expiry: "" }); setEditCouponId(null); setShowCouponCreate(false);
                 }} style={{
@@ -5569,12 +5682,21 @@ A는 상황을 작성한 사람, B는 상대방이다.
                   border: "none", fontSize: 14, fontWeight: 700, cursor: (newCoupon.title.trim() && newCoupon.expiry) ? "pointer" : "default",
                 }}>수정하기</button>
               ) : couponCreateMode === "shop" ? (
-                <button onClick={() => {
+                <button onClick={async () => {
                   if (!newCoupon.title.trim() || !newCoupon.expiry) return;
-                  setShopCoupons(prev => [...prev, {
-                    id: Date.now(), title: newCoupon.title, desc: newCoupon.desc || "",
-                    grapes: newCouponGrapes, expiry: newCoupon.expiry, registeredBy: user.name,
-                  }]);
+                  const coupleId = user.coupleId;
+                  if (coupleId && authUser) {
+                    const { error } = await createShopListing(coupleId, authUser.uid, {
+                      title: newCoupon.title, desc: newCoupon.desc || "",
+                      grapes: newCouponGrapes, expiry: newCoupon.expiry, registeredBy: user.name,
+                    });
+                    if (error) { showToast(error, "error"); return; }
+                  } else {
+                    setShopCoupons(prev => [...prev, {
+                      id: Date.now(), title: newCoupon.title, desc: newCoupon.desc || "",
+                      grapes: newCouponGrapes, expiry: newCoupon.expiry, registeredBy: user.name,
+                    }]);
+                  }
                   showToast("포도알 상점에 쿠폰을 등록했어요! 🍇");
                   setNewCoupon({ title: "", desc: "", expiry: "" }); setNewCouponGrapes(10); setCouponCreateMode("personal"); setShowCouponCreate(false);
                 }} style={{
@@ -5584,9 +5706,15 @@ A는 상황을 작성한 사람, B는 상대방이다.
                   border: "none", fontSize: 14, fontWeight: 700, cursor: (newCoupon.title.trim() && newCoupon.expiry) ? "pointer" : "default",
                 }}>등록하기</button>
               ) : (<>
-                <button onClick={() => {
+                <button onClick={async () => {
                   if (!newCoupon.title.trim() || !newCoupon.expiry) return;
-                  setMyCoupons(prev => [...prev, { id: Date.now(), title: newCoupon.title, desc: newCoupon.desc || "", from: user.name, to: partnerDisplayName, expiry: newCoupon.expiry, status: "draft", origin: "direct" }]);
+                  const coupleId = user.coupleId;
+                  if (coupleId && authUser) {
+                    const { error } = await createCoupon(coupleId, authUser.uid, { title: newCoupon.title, desc: newCoupon.desc || "", expiry: newCoupon.expiry }, 0);
+                    if (error) { showToast(error, "error"); return; }
+                  } else {
+                    setMyCoupons(prev => [...prev, { id: Date.now(), title: newCoupon.title, desc: newCoupon.desc || "", from: user.name, to: partnerDisplayName, expiry: newCoupon.expiry, status: "draft", origin: "direct" }]);
+                  }
                   showToast("쿠폰을 보관했어요. 나중에 보낼 수 있어요! 📦");
                   setNewCoupon({ title: "", desc: "", expiry: "" }); setEditCouponId(null); setShowCouponCreate(false);
                 }} style={{
@@ -5596,7 +5724,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
                   border: (newCoupon.title.trim() && newCoupon.expiry) ? `1px solid ${colors.border}` : "none",
                   fontSize: 13, fontWeight: 600, cursor: (newCoupon.title.trim() && newCoupon.expiry) ? "pointer" : "default",
                 }}>보관하기</button>
-                <button onClick={() => {
+                <button onClick={async () => {
                   if (!newCoupon.title.trim() || !newCoupon.expiry) return;
                   if (!user.partnerConnected) {
                     setShowCouponCreate(false);
@@ -5604,7 +5732,13 @@ A는 상황을 작성한 사람, B는 상대방이다.
                     setShowPartnerRequiredPopup(true);
                     return;
                   }
-                  setMyCoupons(prev => [...prev, { id: Date.now(), title: newCoupon.title, desc: newCoupon.desc || "", from: user.name, to: partnerDisplayName, expiry: newCoupon.expiry, status: "sent", origin: "direct" }]);
+                  const coupleId = user.coupleId;
+                  if (coupleId && authUser) {
+                    const { error } = await createCoupon(coupleId, authUser.uid, { title: newCoupon.title, desc: newCoupon.desc || "", expiry: newCoupon.expiry, toUid: user.partnerUid }, 0);
+                    if (error) { showToast(error, "error"); return; }
+                  } else {
+                    setMyCoupons(prev => [...prev, { id: Date.now(), title: newCoupon.title, desc: newCoupon.desc || "", from: user.name, to: partnerDisplayName, expiry: newCoupon.expiry, status: "sent", origin: "direct" }]);
+                  }
                   showToast(`${partnerDisplayName}님에게 쿠폰을 보냈어요! 🎫`);
                   setNewCoupon({ title: "", desc: "", expiry: "" }); setEditCouponId(null); setShowCouponCreate(false);
                 }} style={{
@@ -5649,8 +5783,14 @@ A는 상황을 작성한 사람, B는 상대방이다.
                 flex: 1, padding: "12px", borderRadius: 12, background: "#F3F4F6",
                 border: "none", fontSize: 14, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
               }}>취소</button>
-              <button onClick={() => {
-                setMyCoupons(prev => prev.filter(c => c.id !== confirmDeleteCoupon));
+              <button onClick={async () => {
+                const coupleId = user.coupleId;
+                if (coupleId && authUser) {
+                  const { error } = await deleteCoupon(coupleId, confirmDeleteCoupon, authUser.uid);
+                  if (error) { showToast(error, "error"); return; }
+                } else {
+                  setMyCoupons(prev => prev.filter(c => c.id !== confirmDeleteCoupon));
+                }
                 setConfirmDeleteCoupon(null);
                 showToast("쿠폰이 삭제되었어요");
               }} style={{
@@ -5711,8 +5851,14 @@ A는 상황을 작성한 사람, B는 상대방이다.
                 flex: 1, padding: "12px", borderRadius: 12, background: "#F3F4F6",
                 border: "none", fontSize: 14, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
               }}>취소</button>
-              <button onClick={() => {
-                setShopCoupons(prev => prev.filter(c => c.id !== confirmDeleteShopCoupon));
+              <button onClick={async () => {
+                const coupleId = user.coupleId;
+                if (coupleId) {
+                  const { error } = await deleteShopListing(coupleId, confirmDeleteShopCoupon);
+                  if (error) { showToast(error, "error"); return; }
+                } else {
+                  setShopCoupons(prev => prev.filter(c => c.id !== confirmDeleteShopCoupon));
+                }
                 setConfirmDeleteShopCoupon(null);
                 showToast("쿠폰이 삭제되었어요");
               }} style={{
@@ -5749,16 +5895,21 @@ A는 상황을 작성한 사람, B는 상대방이다.
                 { emoji: "😔", label: "우울해요", value: "sad" },
                 { emoji: "😤", label: "화나요", value: "angry" },
               ].map(mood => (
-                <button key={mood.value} onClick={() => {
+                <button key={mood.value} onClick={async () => {
                   const today = new Date().toISOString().split('T')[0];
-                  setMoodHistory(prev => [...prev.filter(m => m.date !== today), {
+                  const moodEntry = {
                     date: today,
                     mood: mood.value,
                     emoji: mood.emoji,
                     timestamp: new Date().toISOString(),
-                  }]);
+                  };
+                  setMoodHistory(prev => [...prev.filter(m => m.date !== today), moodEntry]);
+                  moodPopupShownRef.current = true;
                   setShowMoodPopup(false);
                   showToast(`오늘 기분: ${mood.emoji} ${mood.label}`);
+                  if (authUser) {
+                    try { await saveMoodEntry(authUser.uid, moodEntry); } catch (e) { console.error('Mood save error:', e); }
+                  }
                 }} style={{
                   display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
                   padding: "14px 16px", borderRadius: 16, background: "#F9FAFB",
@@ -5796,8 +5947,14 @@ A는 상황을 작성한 사람, B는 상대방이다.
                 flex: 1, padding: "12px", borderRadius: 12, background: "#F3F4F6",
                 border: "none", fontSize: 14, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
               }}>취소</button>
-              <button onClick={() => {
-                setMyCoupons(prev => prev.map(c => c.id === confirmSendCoupon ? { ...c, status: "sent" } : c));
+              <button onClick={async () => {
+                const coupleId = user.coupleId;
+                if (coupleId && authUser) {
+                  const { error } = await sendCoupon(coupleId, confirmSendCoupon, user.partnerUid);
+                  if (error) { showToast(error, "error"); return; }
+                } else {
+                  setMyCoupons(prev => prev.map(c => c.id === confirmSendCoupon ? { ...c, status: "sent" } : c));
+                }
                 setConfirmSendCoupon(null);
                 showToast(`${partnerDisplayName}님에게 쿠폰을 보냈어요! 🎫`);
               }} style={{
@@ -5933,8 +6090,14 @@ A는 상황을 작성한 사람, B는 상대방이다.
                 flex: 1, padding: "12px", borderRadius: 12, background: "#F3F4F6",
                 border: "none", fontSize: 14, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
               }}>취소</button>
-              <button onClick={() => {
-                setGrapeBoards(prev => prev.filter(b => b.id !== confirmDeleteBoard));
+              <button onClick={async () => {
+                const coupleId = user.coupleId;
+                if (coupleId) {
+                  const { error } = await deleteGrapeBoard(coupleId, confirmDeleteBoard);
+                  if (error) { showToast(error, "error"); return; }
+                } else {
+                  setGrapeBoards(prev => prev.filter(b => b.id !== confirmDeleteBoard));
+                }
                 setConfirmDeleteBoard(null);
                 showToast("포도판이 삭제되었어요");
               }} style={{

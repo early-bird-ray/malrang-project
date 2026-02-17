@@ -1,8 +1,6 @@
-const OpenAI = require('openai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -62,19 +60,20 @@ A는 상황을 작성한 사람, B는 상대방이다.
   "bPhrases": ["B가 먼저 건넬 수 있는 화해 문장 1", "문장 2", "문장 3"]
 }`;
 
-    const completion = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: text },
-      ],
-      temperature: 0.7,
-      response_format: { type: 'json_object' },
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-2.0-flash',
+      systemInstruction: systemPrompt,
+      generationConfig: {
+        temperature: 0.7,
+        responseMimeType: 'application/json',
+      },
     });
 
-    const result = JSON.parse(completion.choices[0].message.content);
+    const result = await model.generateContent(text);
+    const responseText = result.response.text();
+    const parsed = JSON.parse(responseText);
 
-    return res.status(200).json(result);
+    return res.status(200).json(parsed);
   } catch (error) {
     console.error('Judge API error:', error);
     return res.status(500).json({
