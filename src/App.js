@@ -4,10 +4,15 @@ import {
   ChevronRight, ChevronLeft, Copy, Share2, Check, X, Plus,
   Gift, Sparkles, Ticket,
   Send, Bell, Settings,
-  RefreshCw, Leaf, Utensils, Shirt,
+  RefreshCw, Leaf,
   Trash2, LogOut
 } from "lucide-react";
 import { signInWithGoogle, logOut, onAuthChange, saveUserData, getUserData } from "./firebase";
+import { earnGrapes, spendGrapes } from "./services/grapeService";
+import { saveAiTransformEntry, updateUserData, generateUniqueInviteCode, registerInviteCode } from "./services/userService";
+import { createPair } from "./services/pairService";
+import { subscribeToUser } from "./services/listenerService";
+import { setupCoupleListeners, teardownCoupleListeners } from "./services/listenerService";
 
 
 // ─── i18n (Internationalization) ─────────────────────────
@@ -171,7 +176,7 @@ const MOCK_USER = {
   partnerConnected: false,
   partnerId: "",
   coupleId: "",
-  inviteCode: "MALL-7K2X",
+  inviteCode: "",
   isSubscribed: false,
   grapePoints: 0,
   totalGrapes: 0,
@@ -294,11 +299,11 @@ function GrapeCluster({ filled, total, size = "large" }) {
 
 
 // ─── Survey / Onboarding Screen ───────────────────────────
-function OnboardingScreen({ onComplete, onClose, savedAnswers = {} }) {
+function OnboardingScreen({ onComplete, onClose, savedAnswers = {}, myInviteCode = "" }) {
   const [step, setStep] = useState(0);
   const [answers, setAnswers] = useState(savedAnswers);
   const [inviteCode, setInviteCode] = useState("");
-  const [textInput, setTextInput] = useState("");
+  const [textInput, setTextInput] = useState(savedAnswers.forbiddenWords || "");
   const [showExitConfirm, setShowExitConfirm] = useState(false);
 
   const questions = [
@@ -438,9 +443,12 @@ function OnboardingScreen({ onComplete, onClose, savedAnswers = {} }) {
               <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
                 분석을 종료하시겠습니까?
               </h3>
+              <p style={{ fontSize: 13, color: colors.rose, lineHeight: 1.6, marginBottom: 6, fontWeight: 600 }}>
+                분석이 완료되지 않았습니다.
+              </p>
               <p style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.6, marginBottom: 20 }}>
-                지금까지 입력한 내용은 저장되어<br/>
-                다음에 이어서 진행할 수 있어요.
+                모든 질문(11개)을 완료해야 분석 결과가 저장됩니다.<br/>
+                지금 종료하면 작성한 내용은 저장되지 않아요.
               </p>
               <div style={{ display: "flex", gap: 8 }}>
                 <button onClick={() => setShowExitConfirm(false)} style={{
@@ -452,7 +460,7 @@ function OnboardingScreen({ onComplete, onClose, savedAnswers = {} }) {
                 </button>
                 <button onClick={() => {
                   setShowExitConfirm(false);
-                  onClose && onClose(answers);
+                  onClose && onClose(null); // null = 저장하지 않음
                 }} style={{
                   flex: 1, padding: "12px", borderRadius: 12,
                   background: colors.primary, border: "none",
@@ -587,9 +595,12 @@ function OnboardingScreen({ onComplete, onClose, savedAnswers = {} }) {
             <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
               분석을 종료하시겠습니까?
             </h3>
+            <p style={{ fontSize: 13, color: colors.rose, lineHeight: 1.6, marginBottom: 6, fontWeight: 600 }}>
+              분석이 완료되지 않았습니다.
+            </p>
             <p style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.6, marginBottom: 20 }}>
-              지금까지 입력한 내용은 저장되어<br/>
-              다음에 이어서 진행할 수 있어요.
+              모든 질문(11개)을 완료해야 분석 결과가 저장됩니다.<br/>
+              지금 종료하면 작성한 내용은 저장되지 않아요.
             </p>
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={() => setShowExitConfirm(false)} style={{
@@ -601,7 +612,7 @@ function OnboardingScreen({ onComplete, onClose, savedAnswers = {} }) {
               </button>
               <button onClick={() => {
                 setShowExitConfirm(false);
-                onClose && onClose(answers);
+                onClose && onClose(null);
               }} style={{
                 flex: 1, padding: "12px", borderRadius: 12,
                 background: colors.primary, border: "none",
@@ -650,9 +661,13 @@ function OnboardingScreen({ onComplete, onClose, savedAnswers = {} }) {
         }}>
           <p style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8 }}>나의 초대 코드</p>
           <div style={{ fontSize: 24, fontWeight: 800, color: colors.primary, letterSpacing: 3, marginBottom: 12 }}>
-            MALL-7K2X
+            {myInviteCode || "생성 중..."}
           </div>
-          <button onClick={() => navigator.clipboard?.writeText?.("MALL-7K2X")} style={{
+          <button onClick={() => {
+            if (myInviteCode) {
+              navigator.clipboard?.writeText?.(myInviteCode);
+            }
+          }} style={{
             background: colors.primary, color: "#fff", border: "none",
             padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer",
             display: "inline-flex", alignItems: "center", gap: 6,
@@ -718,7 +733,17 @@ export default function MallangApp() {
     }
   };
 
-  const [screen, setScreen] = useState("splash");
+  // 이미 로그인한 유저(이름 있음)면 스플래시 없이 바로 홈
+  const [screen, setScreen] = useState(() => {
+    try {
+      const saved = localStorage.getItem("mallang_user");
+      if (saved) {
+        const u = JSON.parse(saved);
+        if (u.name) return "main";
+      }
+    } catch {}
+    return "splash";
+  });
   const [lang, setLang] = useState("ko");
   const t = (key) => (i18n[key] && i18n[key][lang]) || (i18n[key] && i18n[key]["ko"]) || key;
 
@@ -801,13 +826,41 @@ export default function MallangApp() {
   const [voiceResult, setVoiceResult] = useState(null); // "전체" | "사용" | "미사용"
   const [editCouponId, setEditCouponId] = useState(null);
   const [couponViewTab, setCouponViewTab] = useState("sent"); // "sent" | "received"
+  const [hearts, setHearts] = useState(() => loadFromStorage("hearts", 0));
+  const [confirmDeleteBoard, setConfirmDeleteBoard] = useState(null);
 
   const showToast = (message, type = "success") => {
     setToast({ visible: true, message, type });
     setTimeout(() => setToast({ ...toast, visible: false }), 2200);
   };
 
-  const partnerDisplayName = user.partnerConnected && user.partnerName ? user.partnerName : "짝꿍";
+  const partnerDisplayName = user.partnerConnected && user.partnerName ? user.partnerName : t("partnerDefault");
+
+  // 초대 코드 생성 함수 (중복 체크 포함, 한 번 생성되면 고정)
+  const generateInviteCodeOnce = useCallback(async () => {
+    const newCode = await generateUniqueInviteCode();
+    setUser(u => ({ ...u, inviteCode: newCode }));
+    if (authUser) {
+      await updateUserData(authUser.uid, { inviteCode: newCode });
+      await registerInviteCode(newCode, authUser.uid);
+    }
+    return newCode;
+  }, [authUser]);
+
+  // 초대 코드 없으면 자동 생성 (한 번만)
+  useEffect(() => {
+    if (!user.inviteCode && user.name && authUser) {
+      (async () => {
+        const code = await generateUniqueInviteCode();
+        setUser(u => {
+          if (u.inviteCode) return u; // 이미 생성됨
+          return { ...u, inviteCode: code };
+        });
+        await updateUserData(authUser.uid, { inviteCode: code });
+        await registerInviteCode(code, authUser.uid);
+      })();
+    }
+  }, [user.name, user.inviteCode, authUser]);
   const reportUnlocked = reportTodayUnlocked; // 포도알 10개 결제 필요
 
   // Firebase Auth 리스너
@@ -826,10 +879,23 @@ export default function MallangApp() {
           setAuthUser(firebaseUser);
           // Firebase에서 사용자 데이터 로드
           try {
+            // 새 스키마 유저 문서 자동 생성 (없으면)
+            const { createUserDocument } = await import("./services/userService");
+            await createUserDocument(firebaseUser);
+
             const { data } = await getUserData(firebaseUser.uid);
             if (data) {
-              // Firebase 데이터로 상태 업데이트
-              if (data.user) setUser(data.user);
+              // 새 스키마 필드 동기화
+              setUser(u => ({
+                ...u,
+                ...(data.user || {}), // 레거시 호환
+                name: data.displayName || (data.user && data.user.name) || u.name,
+                inviteCode: data.inviteCode || u.inviteCode,
+                grapePoints: data.grapePoints !== undefined ? data.grapePoints : (data.user?.grapePoints || u.grapePoints),
+                coupleId: data.activeCoupleId || '',
+                partnerConnected: !!data.activeCoupleId,
+              }));
+              // 레거시 데이터 호환
               if (data.chores) setChores(data.chores);
               if (data.praiseLog) setPraiseLog(data.praiseLog);
               if (data.grapeBoards) setGrapeBoards(data.grapeBoards);
@@ -837,7 +903,9 @@ export default function MallangApp() {
               if (data.shopCoupons) setShopCoupons(data.shopCoupons);
               if (data.moodHistory) setMoodHistory(data.moodHistory);
               if (data.conversationHistory) setConversationHistory(data.conversationHistory);
-              if (data.savedSurveyAnswers) setSavedSurveyAnswers(data.savedSurveyAnswers);
+              if (data.savedSurveyAnswers || data.survey) {
+                setSavedSurveyAnswers(data.savedSurveyAnswers || data.survey || {});
+              }
             }
           } catch (e) {
             console.error("Failed to load user data:", e);
@@ -858,30 +926,63 @@ export default function MallangApp() {
     };
   }, []);
 
-  // Firebase에 데이터 저장 함수
+  // Firebase 실시간 리스너 (onSnapshot) - syncToFirebase 대체
+  // 유저 문서 실시간 구독
+  useEffect(() => {
+    if (!authUser) return;
+    const unsubscribe = subscribeToUser(authUser.uid, (data) => {
+      if (data) {
+        // 서버 데이터로 로컬 상태 동기화 (Server Wins 전략)
+        setUser(u => ({
+          ...u,
+          grapePoints: data.grapePoints !== undefined ? data.grapePoints : u.grapePoints,
+          totalGrapes: data.totalGrapesEarned || u.totalGrapes || 0,
+          name: data.displayName || u.name,
+          inviteCode: data.inviteCode || u.inviteCode,
+          coupleId: data.activeCoupleId || '',
+        }));
+        if (data.survey && Object.keys(data.survey).length > 0) {
+          setSavedSurveyAnswers(data.survey);
+        }
+      }
+    });
+    return () => unsubscribe();
+  }, [authUser]);
+
+  // 커플 데이터 실시간 구독 (커플 ID 있을 때)
+  useEffect(() => {
+    const coupleId = user.coupleId;
+    if (!authUser || !coupleId) return;
+
+    setupCoupleListeners(coupleId, {
+      onGrapeBoardsUpdate: (boards) => setGrapeBoards(boards),
+      onCouponsUpdate: (coupons) => setMyCoupons(coupons),
+      onPraisesUpdate: (praises) => setPraiseLog(praises),
+      onChoresUpdate: (choreList) => setChores(choreList),
+      onShopListingsUpdate: (listings) => setShopCoupons(listings),
+    });
+
+    return () => teardownCoupleListeners(coupleId);
+  }, [authUser, user.coupleId]);
+
+  // 개인 기분/AI변환 기록은 CoupleContext에서 구독 중 (중복 방지)
+
+  // 로컬 상태 변경 시 Firebase에 저장 (onSnapshot이 처리하지 않는 레거시 데이터용)
   const syncToFirebase = useCallback(async () => {
     if (!authUser) return;
     await saveUserData(authUser.uid, {
       user,
-      chores,
-      praiseLog,
-      grapeBoards,
-      myCoupons,
-      shopCoupons,
-      moodHistory,
-      conversationHistory,
       savedSurveyAnswers,
     });
-  }, [authUser, user, chores, praiseLog, grapeBoards, myCoupons, shopCoupons, moodHistory, conversationHistory, savedSurveyAnswers]);
+  }, [authUser, user, savedSurveyAnswers]);
 
-  // 데이터 변경 시 Firebase에 자동 저장 (디바운스)
   useEffect(() => {
     if (!authUser) return;
     const timer = setTimeout(() => {
       syncToFirebase();
-    }, 2000); // 2초 후 저장 (너무 자주 저장하지 않도록)
+    }, 2000);
     return () => clearTimeout(timer);
-  }, [authUser, user, chores, praiseLog, grapeBoards, myCoupons, shopCoupons, moodHistory, conversationHistory, savedSurveyAnswers, syncToFirebase]);
+  }, [authUser, user, savedSurveyAnswers, syncToFirebase]);
 
   // 구글 로그인 핸들러
   const handleGoogleLogin = async () => {
@@ -894,7 +995,11 @@ export default function MallangApp() {
 
   // 로그아웃 핸들러
   const handleLogout = async () => {
-    await logOut();
+    const { error } = await logOut();
+    if (error) {
+      showToast("로그아웃 실패: " + error, "error");
+      return;
+    }
     // 로컬 상태 초기화
     setUser(MOCK_USER);
     setChores(MOCK_CHORES);
@@ -910,26 +1015,31 @@ export default function MallangApp() {
 
   // Splash screen auto-transition
   useEffect(() => {
-    if (authLoading) return; // 인증 로딩 중이면 대기
+    if (authLoading) return;
 
     if (screen === "splash") {
       const timer = setTimeout(() => {
-        // 이미 이름이 있으면 홈으로, 없으면 환영화면으로
         if (user.name) {
           setScreen("main");
-          // 오늘 기분을 아직 선택하지 않았으면 팝업 표시
-          const today = new Date().toISOString().split('T')[0];
-          const todayMood = moodHistory.find(m => m.date === today);
-          if (!todayMood) {
-            setShowMoodPopup(true);
-          }
         } else {
           setScreen("welcome");
         }
       }, 2000);
       return () => clearTimeout(timer);
     }
-  }, [screen, user.name, moodHistory, authLoading]);
+  }, [screen, user.name, authLoading]);
+
+  // 하루 한 번 기분 팝업 (메인 화면 진입 시)
+  useEffect(() => {
+    if (screen === "main") {
+      const today = new Date().toISOString().split('T')[0];
+      const todayMood = moodHistory.find(m => m.date === today);
+      if (!todayMood) {
+        setShowMoodPopup(true);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen]);
 
   // localStorage 저장 (데이터 변경 시)
   useEffect(() => {
@@ -961,6 +1071,10 @@ export default function MallangApp() {
   }, [shopCoupons]);
 
   useEffect(() => {
+    localStorage.setItem("mallang_hearts", JSON.stringify(hearts));
+  }, [hearts]);
+
+  useEffect(() => {
     localStorage.setItem("mallang_moodHistory", JSON.stringify(moodHistory));
   }, [moodHistory]);
 
@@ -970,58 +1084,46 @@ export default function MallangApp() {
 
   // 안드로이드 뒤로가기 버튼 처리
   useEffect(() => {
-    // 페이지 로드 시 history state 추가
     window.history.pushState({ screen: "main" }, "");
 
     const handlePopState = (e) => {
       e.preventDefault();
+      window.history.pushState({ screen: "main" }, "");
 
-      // 모달이 열려있으면 모달 닫기
-      if (showSettings) {
-        setShowSettings(false);
-        setSettingsTab("main");
-        window.history.pushState({ screen: "main" }, "");
-        return;
-      }
-      if (showMoodPopup) {
-        setShowMoodPopup(false);
-        window.history.pushState({ screen: "main" }, "");
-        return;
-      }
-      if (showNewBoard) {
-        setShowNewBoard(false);
-        window.history.pushState({ screen: "main" }, "");
-        return;
-      }
-      if (showCouponCreate) {
-        setShowCouponCreate(false);
-        window.history.pushState({ screen: "main" }, "");
-        return;
-      }
-      if (showAddTodo) {
-        setShowAddTodo(false);
-        window.history.pushState({ screen: "main" }, "");
+      // 모달이 열려있으면 모달 닫기 (우선순위 높음)
+      if (showSettings) { setShowSettings(false); setSettingsTab("main"); return; }
+      if (showMoodPopup) { setShowMoodPopup(false); return; }
+      if (showNewBoard) { setShowNewBoard(false); return; }
+      if (showCouponCreate) { setShowCouponCreate(false); return; }
+      if (showAddTodo) { setShowAddTodo(false); return; }
+      if (showConflictInput) { setShowConflictInput(false); return; }
+      if (showConversationHistory) { setShowConversationHistory(false); return; }
+
+      // 메인 화면이면서 홈 탭이 아니면 홈 탭으로 이동
+      if (screen === "main" && tab !== "home") {
+        setTab("home");
         return;
       }
 
-      // 탭별 이전 화면 처리
-      if (screen === "main") {
-        // 메인 화면에서는 종료 확인
-        setShowExitConfirm(true);
-        window.history.pushState({ screen: "main" }, "");
+      // 메인 화면 + 홈 탭이면 종료 시도 (PWA 최소화)
+      if (screen === "main" && tab === "home") {
+        if (window.navigator.app && window.navigator.app.exitApp) {
+          window.navigator.app.exitApp();
+        } else {
+          window.close();
+        }
         return;
       }
 
-      // 다른 화면에서는 메인으로 이동
+      // 다른 화면에서는 메인으로
       if (screen !== "splash" && screen !== "welcome" && screen !== "welcome_done" && screen !== "onboarding") {
         setScreen("main");
-        window.history.pushState({ screen: "main" }, "");
       }
     };
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [screen, showSettings, showMoodPopup, showNewBoard, showCouponCreate, showAddTodo]);
+  }, [screen, tab, showSettings, showMoodPopup, showNewBoard, showCouponCreate, showAddTodo, showConflictInput, showConversationHistory]);
 
   // Ad watching simulation timer
   useEffect(() => {
@@ -1033,61 +1135,78 @@ export default function MallangApp() {
     }
   }, [adWatching, adProgress]);
 
+  // OpenAI 직접 호출 헬퍼
+  const callOpenAI = async (messages, jsonMode = true) => {
+    const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
+    if (!apiKey) throw new Error('OpenAI API 키가 설정되지 않았습니다');
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages,
+        temperature: 0.7,
+        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+      }),
+    });
+    if (!res.ok) throw new Error(`OpenAI API error: ${res.status}`);
+    const data = await res.json();
+    return JSON.parse(data.choices[0].message.content);
+  };
+
   const handleConflictSubmit = async () => {
     if (!conflictText.trim()) return;
 
     try {
-      // GPT API 호출
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${process.env.REACT_APP_OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'system',
-              content: `당신은 커플 대화 전문가입니다. 사용자가 하고 싶은 말을 짝꿍이 좋아하는 스타일로 부드럽게 변환해주세요.
+      let result;
+      // 서버 API 먼저 시도, 실패 시 직접 호출
+      try {
+        const response = await fetch('/api/transform', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authUser ? await authUser.getIdToken() : ''}`,
+          },
+          body: JSON.stringify({ text: conflictText, likedWords, dislikedWords }),
+        });
+        if (!response.ok) throw new Error('서버 API 실패');
+        result = await response.json();
+      } catch {
+        // 직접 OpenAI 호출
+        const systemPrompt = `당신은 커플 대화 전문가입니다. 사용자가 하고 싶은 말을 짝꿍이 좋아하는 스타일로 부드럽게 변환해주세요.
 변환 시 다음 원칙을 따르세요:
 1. 감정을 먼저 인정하고 공감하는 표현 사용
 2. "나는 ~해서 ~했어" 같은 I-message 형태로
 3. 상대방을 비난하지 않고 해결책 제안
 4. 따뜻하고 다정한 어조 유지
+${likedWords ? `\n사용자의 짝꿍이 좋아하는 표현: ${likedWords}` : ''}
+${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
 
 반드시 다음 JSON 형식으로만 응답하세요:
-{"transformed": "변환된 문장", "tip": "짧은 대화 팁 (20자 이내)", "style": "스타일 이름 (예: 차분한 공감형)"}`
-            },
-            { role: 'user', content: conflictText }
-          ],
-          temperature: 0.7,
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const result = JSON.parse(data.choices[0].message.content);
-
-        const suggestion = {
-          id: Date.now(),
-          original: conflictText,
-          transformed: result.transformed,
-          tip: result.tip,
-          partnerStyle: result.style || "차분한 공감형",
-          timestamp: new Date().toISOString(),
-          feedback: null, // 나중에 피드백 저장
-        };
-
-        setAiSuggestion(suggestion);
-        // 기록에 저장
-        setConversationHistory(prev => [suggestion, ...prev]);
-      } else {
-        throw new Error('API 호출 실패');
+{"transformed": "변환된 문장", "tip": "짧은 대화 팁 (20자 이내)", "style": "스타일 이름 (예: 차분한 공감형)"}`;
+        result = await callOpenAI([
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: conflictText },
+        ]);
       }
+
+      const suggestion = {
+        id: Date.now(),
+        original: conflictText,
+        transformed: result.transformed,
+        tip: result.tip,
+        partnerStyle: result.style || "차분한 공감형",
+        timestamp: new Date().toISOString(),
+        feedback: null,
+      };
+
+      setAiSuggestion(suggestion);
+      if (authUser) {
+        await saveAiTransformEntry(authUser.uid, user.coupleId || null, suggestion);
+      }
+      setConversationHistory(prev => [suggestion, ...prev]);
     } catch (error) {
-      console.error('GPT API error:', error);
-      // Fallback 데모 데이터
+      console.error('Transform API error:', error);
       const suggestion = {
         id: Date.now(),
         original: conflictText,
@@ -1135,29 +1254,32 @@ export default function MallangApp() {
     }));
   };
 
+  // 짝꿍 미등록 경고 팝업 상태
+  const [showPartnerRequiredPopup, setShowPartnerRequiredPopup] = useState(false);
+  const [partnerRequiredAction, setPartnerRequiredAction] = useState(""); // "praise" | "coupon"
+
+  // 칭찬 수정 상태
+  const [editPraiseId, setEditPraiseId] = useState(null);
+  const [editPraiseText, setEditPraiseText] = useState("");
+  const [confirmDeletePraise, setConfirmDeletePraise] = useState(null);
+
   const sendPraise = () => {
     if (!praiseText.trim()) return;
+    if (!user.partnerConnected) {
+      setPartnerRequiredAction("praise");
+      setShowPartnerRequiredPopup(true);
+      return;
+    }
     const newPraise = {
       id: Date.now(),
       from: user.name || "나",
       message: praiseText.trim(),
-      grapes: 3,
       date: new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric" }),
     };
     setPraiseLog(prev => [newPraise, ...prev]);
-    showToast(`${partnerDisplayName}님에게 칭찬을 보냈어요! 💜`);
+    setHearts(h => h + 1);
+    showToast(`${partnerDisplayName}님에게 칭찬을 보냈어요! 💜 하트 +1`);
     setPraiseText("");
-  };
-
-  const choreIcon = (icon) => {
-    const iconMap = {
-      utensils: <Utensils size={16} />,
-      shirt: <Shirt size={16} />,
-      home: <Home size={16} />,
-      trash: <Trash2 size={16} />,
-      dog: <Heart size={16} />,
-    };
-    return iconMap[icon] || <Home size={16} />;
   };
 
   // 로딩 중 화면
@@ -1235,7 +1357,7 @@ export default function MallangApp() {
         <style>{`
           @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
           * { margin: 0; padding: 0; box-sizing: border-box; color-scheme: only light; }
-          
+
           input { font-family: inherit; }
         `}</style>
         <div style={{ textAlign: "center", marginBottom: 40, display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -1248,7 +1370,7 @@ export default function MallangApp() {
           </p>
         </div>
 
-        {/* 구글 로그인 버튼 */}
+        {/* 구글 로그인 버튼 - 로그인 전 */}
         {!authUser ? (
           <div style={{ marginBottom: 24 }}>
             {loginError && (
@@ -1273,121 +1395,211 @@ export default function MallangApp() {
               </svg>
               <span style={{ fontSize: 14, fontWeight: 600, color: colors.text }}>Google로 로그인</span>
             </button>
-            <p style={{ fontSize: 11, color: colors.textTertiary, textAlign: "center", marginTop: 8 }}>
-              로그인하면 기기 간 데이터 동기화가 가능해요
-            </p>
+            {/* Task 11: 로그인 안내 문구 삭제 */}
           </div>
         ) : (
-          <div style={{
-            background: colors.mintLight, borderRadius: 12, padding: "12px 16px",
-            marginBottom: 24, display: "flex", alignItems: "center", gap: 10,
-          }}>
+          /* 로그인 성공 → 닉네임/짝꿍코드 입력 팝업 */
+          <>
             <div style={{
-              width: 32, height: 32, borderRadius: "50%", background: colors.mint,
-              display: "flex", alignItems: "center", justifyContent: "center",
+              background: colors.mintLight, borderRadius: 12, padding: "12px 16px",
+              marginBottom: 24, display: "flex", alignItems: "center", gap: 10,
             }}>
-              <Check size={16} color="#fff" />
+              <div style={{
+                width: 32, height: 32, borderRadius: "50%", background: colors.mint,
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Check size={16} color="#fff" />
+              </div>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: colors.mint }}>로그인 완료</div>
+                <div style={{ fontSize: 11, color: colors.textTertiary }}>{authUser.email}</div>
+              </div>
             </div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: colors.mint }}>로그인 완료</div>
-              <div style={{ fontSize: 11, color: colors.textTertiary }}>{authUser.email}</div>
-            </div>
-          </div>
-        )}
 
-        <label style={{ fontSize: 13, fontWeight: 600, color: colors.text, display: "block", marginBottom: 6 }}>
-          {t("myName")}
-        </label>
-        <input
-          type="text"
-          placeholder={t("namePlaceholder")}
-          value={welcomeName}
-          onChange={e => setWelcomeName(e.target.value)}
-          style={{
-            width: "100%", padding: "14px 16px", borderRadius: 12,
-            border: `1.5px solid ${colors.border}`, fontSize: 16,
-            outline: "none", boxSizing: "border-box", marginBottom: 16,
-          }}
-        />
-
-        <label style={{ fontSize: 13, fontWeight: 600, color: colors.text, display: "block", marginBottom: 6 }}>
-          {t("partnerCode")}
-        </label>
-        <input
-          type="text"
-          placeholder={t("codePlaceholder")}
-          value={welcomePartnerCode}
-          onChange={e => setWelcomePartnerCode(e.target.value.toUpperCase())}
-          style={{
-            width: "100%", padding: "14px 16px", borderRadius: 12,
-            border: `1.5px solid ${colors.border}`, fontSize: 16,
-            outline: "none", boxSizing: "border-box", letterSpacing: 2,
-            fontWeight: 600, textAlign: "center", marginBottom: 8,
-          }}
-        />
-
-        <button onClick={() => {
-          if (!welcomeName.trim()) {
-            showToast("이름을 입력해주세요", "error");
-            return;
-          }
-          if (!welcomePartnerCode.trim()) {
-            setShowSkipCodeConfirm(true);
-            return;
-          }
-          setUser(u => ({ ...u, name: welcomeName.trim(), partnerConnected: true }));
-          setScreen("welcome_done");
-        }} style={{
-          width: "100%", padding: "16px", borderRadius: 14, marginTop: 16,
-          background: welcomeName.trim()
-            ? `linear-gradient(135deg, ${colors.primary}, ${colors.primaryDark})`
-            : "#E5E7EB",
-          color: welcomeName.trim() ? "#fff" : "#9CA3AF",
-          border: "none", fontSize: 16, fontWeight: 700,
-          cursor: welcomeName.trim() ? "pointer" : "default",
-        }}>
-          시작하기
-        </button>
-
-        {/* Skip partner code confirm popup */}
-        {showSkipCodeConfirm && (
-          <div style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
-            zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
+            {/* 닉네임/짝꿍 코드 팝업 */}
             <div style={{
-              background: "#fff", borderRadius: 20, padding: "28px 24px",
-              width: "82%", maxWidth: 320, textAlign: "center",
+              position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+              zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center",
             }}>
-              <div style={{ fontSize: 36, marginBottom: 12 }}>🔗</div>
-              <h3 style={{ fontSize: 16, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
-                짝꿍 코드 미입력
-              </h3>
-              <p style={{ fontSize: 14, color: colors.textSecondary, lineHeight: 1.6, marginBottom: 20 }}>
-                짝꿍 코드는 나중에<br/>입력하시겠습니까?
-              </p>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => setShowSkipCodeConfirm(false)} style={{
-                  flex: 1, padding: "13px", borderRadius: 12,
-                  background: "#F3F4F6", color: colors.textSecondary,
-                  border: "none", fontSize: 14, fontWeight: 600, cursor: "pointer",
+              <div style={{
+                background: "#fff", borderRadius: 24, padding: "32px 24px",
+                width: "90%", maxWidth: 380,
+              }}>
+                <div style={{ textAlign: "center", marginBottom: 24 }}>
+                  <div style={{ fontSize: 48, marginBottom: 8 }}>🍇</div>
+                  <h2 style={{ fontSize: 20, fontWeight: 800, color: colors.text, marginBottom: 4 }}>
+                    프로필 설정
+                  </h2>
+                  <p style={{ fontSize: 13, color: colors.textSecondary }}>
+                    닉네임을 입력하고 짝꿍과 연결해보세요
+                  </p>
+                </div>
+
+                <label style={{ fontSize: 13, fontWeight: 600, color: colors.text, display: "block", marginBottom: 6 }}>
+                  {t("myName")}
+                </label>
+                <input
+                  type="text"
+                  placeholder={t("namePlaceholder")}
+                  value={welcomeName}
+                  onChange={e => setWelcomeName(e.target.value)}
+                  style={{
+                    width: "100%", padding: "14px 16px", borderRadius: 12,
+                    border: `1.5px solid ${colors.border}`, fontSize: 16,
+                    outline: "none", boxSizing: "border-box", marginBottom: 16,
+                  }}
+                />
+
+                {/* 나의 초대 코드 */}
+                <div style={{
+                  background: colors.primaryLight, borderRadius: 12, padding: "14px 16px",
+                  textAlign: "center", marginBottom: 16,
                 }}>
-                  돌아가기
-                </button>
-                <button onClick={() => {
-                  setShowSkipCodeConfirm(false);
-                  setUser(u => ({ ...u, name: welcomeName.trim(), partnerConnected: false, partnerName: "" }));
+                  <p style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>나의 초대 코드</p>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: colors.primary, letterSpacing: 3, marginBottom: 8 }}>
+                    {user.inviteCode || "---"}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, justifyContent: "center" }}>
+                    {!user.inviteCode ? (
+                      <button onClick={async () => { await generateInviteCodeOnce(); showToast("초대 코드가 생성되었어요!"); }} style={{
+                        background: colors.primary, color: "#fff", border: "none",
+                        padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                        display: "inline-flex", alignItems: "center", gap: 4,
+                      }}>
+                        <Plus size={12} /> 코드 생성하기
+                      </button>
+                    ) : (
+                      <>
+                        <button onClick={() => {
+                          if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(user.inviteCode).then(() => showToast("초대 코드가 복사되었어요!"));
+                          } else {
+                            const ta = document.createElement("textarea"); ta.value = user.inviteCode; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+                            showToast("초대 코드가 복사되었어요!");
+                          }
+                        }} style={{
+                          background: colors.primary, color: "#fff", border: "none",
+                          padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                        }}>
+                          <Copy size={12} /> 복사
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ textAlign: "center", color: colors.textTertiary, fontSize: 12, marginBottom: 12 }}>또는 짝꿍의 코드 입력</div>
+
+                <input
+                  type="text"
+                  placeholder={t("codePlaceholder")}
+                  value={welcomePartnerCode}
+                  onChange={e => setWelcomePartnerCode(e.target.value.toUpperCase())}
+                  style={{
+                    width: "100%", padding: "14px 16px", borderRadius: 12,
+                    border: `1.5px solid ${colors.border}`, fontSize: 16,
+                    outline: "none", boxSizing: "border-box", letterSpacing: 2,
+                    fontWeight: 600, textAlign: "center", marginBottom: 20,
+                  }}
+                />
+
+                <button onClick={async () => {
+                  if (!welcomeName.trim()) {
+                    showToast("이름을 입력해주세요", "error");
+                    return;
+                  }
+                  if (!welcomePartnerCode.trim()) {
+                    setShowSkipCodeConfirm(true);
+                    return;
+                  }
+                  // 닉네임 저장
+                  setUser(u => ({ ...u, name: welcomeName.trim() }));
+                  if (authUser) {
+                    await updateUserData(authUser.uid, { displayName: welcomeName.trim() });
+                    // 짝꿍 코드 입력한 경우 페어링 시도
+                    const { error } = await createPair(authUser.uid, welcomePartnerCode.trim());
+                    if (error) {
+                      showToast(error, "error");
+                      // 페어링 실패해도 다음 화면으로 이동 (나중에 설정에서 재시도 가능)
+                    } else {
+                      setUser(u => ({ ...u, partnerConnected: true }));
+                      showToast("짝꿍과 연결되었어요! 💜");
+                    }
+                  }
                   setScreen("welcome_done");
                 }} style={{
-                  flex: 1, padding: "13px", borderRadius: 12,
-                  background: `linear-gradient(135deg, ${colors.primary}, ${colors.primaryDark})`,
-                  color: "#fff", border: "none", fontSize: 14, fontWeight: 700, cursor: "pointer",
+                  width: "100%", padding: "16px", borderRadius: 14,
+                  background: welcomeName.trim()
+                    ? `linear-gradient(135deg, ${colors.primary}, ${colors.primaryDark})`
+                    : "#E5E7EB",
+                  color: welcomeName.trim() ? "#fff" : "#9CA3AF",
+                  border: "none", fontSize: 16, fontWeight: 700,
+                  cursor: welcomeName.trim() ? "pointer" : "default",
                 }}>
-                  확인
+                  시작하기
+                </button>
+
+                <button onClick={() => {
+                  if (!welcomeName.trim()) {
+                    showToast("이름을 입력해주세요", "error");
+                    return;
+                  }
+                  setShowSkipCodeConfirm(true);
+                }} style={{
+                  width: "100%", padding: "12px", background: "none",
+                  border: "none", color: colors.textTertiary, fontSize: 13, cursor: "pointer", marginTop: 4,
+                }}>
+                  짝꿍 코드는 나중에 입력할게요
                 </button>
               </div>
             </div>
-          </div>
+
+            {/* Skip partner code confirm popup */}
+            {showSkipCodeConfirm && (
+              <div style={{
+                position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)",
+                zIndex: 400, display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <div style={{
+                  background: "#fff", borderRadius: 20, padding: "28px 24px",
+                  width: "82%", maxWidth: 320, textAlign: "center",
+                }}>
+                  <div style={{ fontSize: 36, marginBottom: 12 }}>🔗</div>
+                  <h3 style={{ fontSize: 16, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
+                    짝꿍 코드 미입력
+                  </h3>
+                  <p style={{ fontSize: 14, color: colors.textSecondary, lineHeight: 1.6, marginBottom: 20 }}>
+                    짝꿍 코드는 설정에서<br/>언제든 입력할 수 있어요
+                  </p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => setShowSkipCodeConfirm(false)} style={{
+                      flex: 1, padding: "13px", borderRadius: 12,
+                      background: "#F3F4F6", color: colors.textSecondary,
+                      border: "none", fontSize: 14, fontWeight: 600, cursor: "pointer",
+                    }}>
+                      돌아가기
+                    </button>
+                    <button onClick={async () => {
+                      setShowSkipCodeConfirm(false);
+                      setUser(u => ({ ...u, name: welcomeName.trim(), partnerConnected: false, partnerName: "" }));
+                      if (authUser) {
+                        const { error } = await updateUserData(authUser.uid, { displayName: welcomeName.trim() });
+                        if (error) showToast("저장 실패: " + error, "error");
+                      }
+                      setScreen("welcome_done");
+                    }} style={{
+                      flex: 1, padding: "13px", borderRadius: 12,
+                      background: `linear-gradient(135deg, ${colors.primary}, ${colors.primaryDark})`,
+                      color: "#fff", border: "none", fontSize: 14, fontWeight: 700, cursor: "pointer",
+                    }}>
+                      확인
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
 
         <Toast {...toast} />
@@ -1438,8 +1650,13 @@ export default function MallangApp() {
   }
 
   if (screen === "onboarding") {
+    // 이전에 완료된 설문 답변이 있으면 그걸 먼저 사용, 없으면 임시 저장본
+    const initialAnswers = Object.keys(savedSurveyAnswers).length > 0
+      ? savedSurveyAnswers
+      : (user.surveyCompleted && user.survey ? user.survey : {});
     return <OnboardingScreen
-      savedAnswers={savedSurveyAnswers}
+      savedAnswers={initialAnswers}
+      myInviteCode={user.inviteCode}
       onComplete={(answers) => {
         setUser(u => ({ ...u, survey: answers, surveyCompleted: true }));
         setSavedSurveyAnswers({}); // 완료 시 임시 저장 초기화
@@ -1447,9 +1664,12 @@ export default function MallangApp() {
         showToast("설문 완료! 말랑에 오신 걸 환영해요 🍇");
       }}
       onClose={(answers) => {
-        setSavedSurveyAnswers(answers); // 진행 상황 저장
+        // answers가 null이면 저장하지 않음 (미완료 종료)
+        if (answers !== null) {
+          setSavedSurveyAnswers(answers);
+        }
         setScreen("main");
-        showToast("성향 분석이 저장되었어요. 나중에 이어서 진행할 수 있어요!");
+        showToast("성향 분석을 종료했어요. 완료하면 결과가 저장됩니다.");
       }}
     />;
   }
@@ -1566,67 +1786,73 @@ export default function MallangApp() {
         </div>
       </div>
 
-      {/* My Coupons - compact */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>🎫 내 쿠폰</h3>
-            {myCoupons.length > 0 && (
-              <span style={{
-                fontSize: 11, fontWeight: 700, color: colors.warm,
-                background: colors.warmLight, borderRadius: 10, padding: "2px 8px",
-              }}>{myCoupons.length}</span>
+      {/* 받은 쿠폰 - compact */}
+      {(() => {
+        const receivedCoupons = myCoupons.filter(c => c.to === user.name && c.status !== "draft");
+        return (
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>🎫 받은 쿠폰</h3>
+                {receivedCoupons.length > 0 && (
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, color: colors.warm,
+                    background: colors.warmLight, borderRadius: 10, padding: "2px 8px",
+                  }}>{receivedCoupons.length}</span>
+                )}
+              </div>
+              {receivedCoupons.length > 0 && (
+                <button onClick={() => { setTab("coupon"); setCouponViewTab("received"); }} style={{
+                  background: "none", border: "none", fontSize: 12, color: colors.primary,
+                  fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 2,
+                }}>
+                  전체보기 <ChevronRight size={14} />
+                </button>
+              )}
+            </div>
+            {receivedCoupons.length > 0 ? (
+              <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch" }}>
+                {receivedCoupons.map(coupon => {
+                  const daysLeft = Math.max(0, Math.ceil((new Date(coupon.expiry) - new Date()) / 86400000));
+                  return (
+                    <div key={coupon.id} style={{
+                      minWidth: 130, flex: "0 0 auto", display: "flex", alignItems: "center", gap: 10,
+                      background: "#fff", borderRadius: 12, padding: "10px 12px",
+                      border: `1px solid ${colors.border}`,
+                      boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
+                      opacity: coupon.status === "used" ? 0.6 : 1,
+                    }}>
+                      <div style={{
+                        width: 34, height: 34, borderRadius: 8,
+                        background: "#fff",
+                        border: `1.5px solid ${colors.border}`,
+                        display: "flex", alignItems: "center", justifyContent: "center",
+                      }}><CouponIcon size={18} /></div>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: colors.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {coupon.title}
+                        </div>
+                        <div style={{ fontSize: 10, color: coupon.status === "used" ? colors.mint : (daysLeft <= 7 ? colors.rose : colors.textTertiary), fontWeight: 500 }}>
+                          {coupon.status === "used" ? "사용 완료" : (daysLeft <= 0 ? "만료" : `D-${daysLeft}`)}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div style={{
+                background: "#fff", borderRadius: 12, padding: "14px",
+                border: `1px dashed ${colors.borderActive}`, textAlign: "center",
+              }}>
+                <span style={{ fontSize: 13, color: colors.textTertiary }}>
+                  아직 받은 쿠폰이 없어요. {partnerDisplayName}님이 보내면 여기에 표시돼요!
+                </span>
+              </div>
             )}
           </div>
-          {myCoupons.length > 0 && (
-            <button onClick={() => setTab("coupon")} style={{
-              background: "none", border: "none", fontSize: 12, color: colors.primary,
-              fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 2,
-            }}>
-              관리 <ChevronRight size={14} />
-            </button>
-          )}
-        </div>
-        {myCoupons.length > 0 ? (
-          <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch" }}>
-            {myCoupons.map(coupon => {
-              const daysLeft = Math.max(0, Math.ceil((new Date(coupon.expiry) - new Date()) / 86400000));
-              return (
-                <div key={coupon.id} style={{
-                  minWidth: 130, flex: "0 0 auto", display: "flex", alignItems: "center", gap: 10,
-                  background: "#fff", borderRadius: 12, padding: "10px 12px",
-                  border: `1px solid ${colors.border}`,
-                  boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-                }}>
-                  <div style={{
-                    width: 34, height: 34, borderRadius: 8,
-                    background: "#fff",
-                    border: `1.5px solid ${colors.border}`,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                  }}><CouponIcon size={18} /></div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: colors.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {coupon.title}
-                    </div>
-                    <div style={{ fontSize: 10, color: daysLeft <= 7 ? colors.rose : colors.textTertiary, fontWeight: 500 }}>
-                      {daysLeft <= 0 ? "만료" : `D-${daysLeft}`}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div style={{
-            background: "#fff", borderRadius: 12, padding: "14px",
-            border: `1px dashed ${colors.borderActive}`, textAlign: "center",
-          }}>
-            <span style={{ fontSize: 13, color: colors.textTertiary }}>
-              아직 쿠폰이 없어요. 포도알을 채워 보상 쿠폰을 만들어보세요!
-            </span>
-          </div>
-        )}
-      </div>
+        );
+      })()}
 
       {/* Confetti Overlay */}
       {showConfetti && (
@@ -1858,16 +2084,10 @@ export default function MallangApp() {
                       ].map(fb => (
                         <button key={fb.value} onClick={() => {
                           setFeedbackGiven(fb.value);
-                          // 대화 기록에도 피드백 저장
                           if (aiSuggestion?.id) {
                             updateConversationFeedback(aiSuggestion.id, fb.value);
                           }
-                          if (fb.value === "success") {
-                            setUser(u => ({ ...u, grapePoints: u.grapePoints + 2 }));
-                            showToast("대화 성공! 포도알 +2 🍇");
-                          } else {
-                            showToast("피드백 감사해요! 더 나은 제안을 할게요");
-                          }
+                          showToast(fb.value === "success" ? "대화 성공! 좋은 소통이었어요 😊" : "피드백 감사해요! 더 나은 제안을 할게요");
                         }} style={{
                           flex: 1, padding: "10px 6px", borderRadius: 10,
                           background: fb.bg, color: fb.color, border: "none",
@@ -1977,12 +2197,7 @@ export default function MallangApp() {
                           ].map(fb => (
                             <button key={fb.value} onClick={() => {
                               updateConversationFeedback(item.id, fb.value);
-                              if (fb.value === "success") {
-                                setUser(u => ({ ...u, grapePoints: u.grapePoints + 2 }));
-                                showToast("대화 성공! 포도알 +2 🍇");
-                              } else {
-                                showToast("피드백 감사해요!");
-                              }
+                              showToast(fb.value === "success" ? "대화 성공! 좋은 소통이었어요 😊" : "피드백 감사해요!");
                             }} style={{
                               flex: 1, padding: "8px 4px", borderRadius: 8,
                               background: fb.bg, color: fb.color, border: "none",
@@ -2208,34 +2423,38 @@ export default function MallangApp() {
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {chores.filter(c => c.type === "routine").map(c => (
             <div key={c.id} style={{
-              display: "flex", alignItems: "center", gap: 12,
               padding: "14px 16px", borderRadius: 14, background: "#fff",
               border: `1px solid ${c.completed ? colors.mintLight : colors.border}`,
               transition: "all 0.2s",
               opacity: c.completed ? 0.6 : 1,
             }}>
-              <div onClick={() => toggleChore(c.id)} style={{
-                width: 22, height: 22, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center",
-                background: c.completed ? colors.mint : "transparent",
-                border: c.completed ? "none" : `2px solid ${colors.borderActive}`,
-                transition: "all 0.2s", cursor: "pointer",
-              }}>
-                {c.completed && <Check size={14} color="#fff" />}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div onClick={() => toggleChore(c.id)} style={{
+                  width: 22, height: 22, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center",
+                  background: c.completed ? colors.mint : "transparent",
+                  border: c.completed ? "none" : `2px solid ${colors.borderActive}`,
+                  transition: "all 0.2s", cursor: "pointer", flexShrink: 0,
+                }}>
+                  {c.completed && <Check size={14} color="#fff" />}
+                </div>
+                <div style={{ flex: 1, cursor: "pointer", minWidth: 0 }} onClick={() => toggleChore(c.id)}>
+                  <div style={{
+                    fontSize: 14, fontWeight: 500, color: colors.text,
+                    textDecoration: c.completed ? "line-through" : "none",
+                    wordBreak: "break-word",
+                  }}>{c.task}</div>
+                </div>
+                <span style={{
+                  fontSize: 11, color: c.assignee === "우리" ? colors.grape : (c.assignee === user.name ? colors.primary : colors.warm),
+                  background: c.assignee === "우리" ? colors.grapeLight : (c.assignee === user.name ? colors.primaryLight : colors.warmLight),
+                  padding: "3px 8px", borderRadius: 6, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap",
+                }}>
+                  {c.assignee}
+                </span>
               </div>
-              <div style={{
-                width: 30, height: 30, borderRadius: 8, background: "#F3F4F6",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                color: colors.textSecondary,
-              }}>
-                {choreIcon(c.icon)}
-              </div>
-              <div style={{ flex: 1, cursor: "pointer" }} onClick={() => toggleChore(c.id)}>
-                <div style={{
-                  fontSize: 14, fontWeight: 500, color: colors.text,
-                  textDecoration: c.completed ? "line-through" : "none",
-                }}>{c.task}</div>
-                {c.days && (
-                  <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 8, paddingLeft: 32 }}>
+                {c.days ? (
+                  <div style={{ display: "flex", gap: 3 }}>
                     {["월","화","수","목","금","토","일"].map(d => (
                       <span key={d} style={{
                         width: 18, height: 18, borderRadius: 4, fontSize: 9, fontWeight: 600,
@@ -2245,34 +2464,26 @@ export default function MallangApp() {
                       }}>{d}</span>
                     ))}
                   </div>
+                ) : (
+                  <span style={{ fontSize: 10, color: colors.textTertiary }}>매일</span>
                 )}
-                {!c.days && (
-                  <span style={{ fontSize: 10, color: colors.textTertiary, marginTop: 2, display: "block" }}>매일</span>
-                )}
-              </div>
-              <span style={{
-                fontSize: 11, color: c.assignee === "우리" ? colors.grape : (c.assignee === user.name ? colors.primary : colors.warm),
-                background: c.assignee === "우리" ? colors.grapeLight : (c.assignee === user.name ? colors.primaryLight : colors.warmLight),
-                padding: "3px 8px", borderRadius: 6, fontWeight: 600,
-              }}>
-                {c.assignee}
-              </span>
-              <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={() => {
-                  setEditTodoId(c.id);
-                  setNewTodoText(c.task);
-                  setNewTodoType(c.type);
-                  setNewTodoAssignee(c.assignee === "우리" ? [user.name, partnerDisplayName] : [c.assignee]);
-                  setNewTodoDays(c.days || ["월","화","수","목","금","토","일"]);
-                  setShowAddTodo(true);
-                }} style={{
-                  padding: "4px 8px", borderRadius: 6, background: "#F3F4F6",
-                  border: "none", fontSize: 10, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
-                }}>수정</button>
-                <button onClick={() => setConfirmDeleteTodo(c.id)} style={{
-                  padding: "4px 8px", borderRadius: 6, background: colors.roseLight,
-                  border: "none", fontSize: 10, fontWeight: 600, color: colors.rose, cursor: "pointer",
-                }}>삭제</button>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <button onClick={() => {
+                    setEditTodoId(c.id);
+                    setNewTodoText(c.task);
+                    setNewTodoType(c.type);
+                    setNewTodoAssignee(c.assignee === "우리" ? [user.name, partnerDisplayName] : [c.assignee]);
+                    setNewTodoDays(c.days || ["월","화","수","목","금","토","일"]);
+                    setShowAddTodo(true);
+                  }} style={{
+                    padding: "4px 8px", borderRadius: 6, background: "#F3F4F6",
+                    border: "none", fontSize: 10, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
+                  }}>수정</button>
+                  <button onClick={() => setConfirmDeleteTodo(c.id)} style={{
+                    padding: "4px 8px", borderRadius: 6, background: colors.roseLight,
+                    border: "none", fontSize: 10, fontWeight: 600, color: colors.rose, cursor: "pointer",
+                  }}>삭제</button>
+                </div>
               </div>
             </div>
           ))}
@@ -2284,34 +2495,36 @@ export default function MallangApp() {
             <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 4 }}>
               {chores.filter(c => c.type === "once").map(c => (
                 <div key={c.id} style={{
-                  display: "flex", alignItems: "center", gap: 12,
                   padding: "14px 16px", borderRadius: 14, background: "#fff",
                   border: `1px solid ${c.completed ? colors.mintLight : colors.border}`,
                   transition: "all 0.2s",
                   opacity: c.completed ? 0.6 : 1,
                 }}>
-                  <div onClick={() => toggleChore(c.id)} style={{
-                    width: 22, height: 22, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center",
-                    background: c.completed ? colors.mint : "transparent",
-                    border: c.completed ? "none" : `2px solid ${colors.borderActive}`,
-                    cursor: "pointer",
-                  }}>
-                    {c.completed && <Check size={14} color="#fff" />}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div onClick={() => toggleChore(c.id)} style={{
+                      width: 22, height: 22, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center",
+                      background: c.completed ? colors.mint : "transparent",
+                      border: c.completed ? "none" : `2px solid ${colors.borderActive}`,
+                      cursor: "pointer", flexShrink: 0,
+                    }}>
+                      {c.completed && <Check size={14} color="#fff" />}
+                    </div>
+                    <div style={{ flex: 1, cursor: "pointer", minWidth: 0 }} onClick={() => toggleChore(c.id)}>
+                      <div style={{
+                        fontSize: 14, fontWeight: 500, color: colors.text,
+                        textDecoration: c.completed ? "line-through" : "none",
+                        wordBreak: "break-word",
+                      }}>{c.task}</div>
+                    </div>
+                    <span style={{
+                      fontSize: 11, color: c.assignee === "우리" ? colors.grape : (c.assignee === user.name ? colors.primary : colors.warm),
+                      background: c.assignee === "우리" ? colors.grapeLight : (c.assignee === user.name ? colors.primaryLight : colors.warmLight),
+                      padding: "3px 8px", borderRadius: 6, fontWeight: 600, flexShrink: 0, whiteSpace: "nowrap",
+                    }}>
+                      {c.assignee}
+                    </span>
                   </div>
-                  <div style={{ flex: 1, cursor: "pointer" }} onClick={() => toggleChore(c.id)}>
-                    <div style={{
-                      fontSize: 14, fontWeight: 500, color: colors.text,
-                      textDecoration: c.completed ? "line-through" : "none",
-                    }}>{c.task}</div>
-                  </div>
-                  <span style={{
-                    fontSize: 11, color: c.assignee === "우리" ? colors.grape : (c.assignee === user.name ? colors.primary : colors.warm),
-                    background: c.assignee === "우리" ? colors.grapeLight : (c.assignee === user.name ? colors.primaryLight : colors.warmLight),
-                    padding: "3px 8px", borderRadius: 6, fontWeight: 600,
-                  }}>
-                    {c.assignee}
-                  </span>
-                  <div style={{ display: "flex", gap: 4 }}>
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6, gap: 4 }}>
                     <button onClick={() => {
                       setEditTodoId(c.id);
                       setNewTodoText(c.task);
@@ -2362,7 +2575,7 @@ export default function MallangApp() {
   const renderGrape = () => (
     <div style={{ padding: "0 20px 100px" }}>
       <div style={{ padding: "16px 0 12px" }}>
-        <h2 style={{ fontSize: 20, fontWeight: 800, color: colors.text }}>🍇 포도알 현황</h2>
+        <h2 style={{ fontSize: 20, fontWeight: 800, color: colors.text }}>🍇 말랑 현황</h2>
       </div>
 
       {/* Sub-tabs: 포도알 / 칭찬하기 */}
@@ -2485,7 +2698,7 @@ export default function MallangApp() {
                   }} />
                 </div>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <button onClick={() => {
+                  <button onClick={async () => {
                     if (pct >= 100) return;
                     setAnimatingBoardId(board.id);
                     setTimeout(() => setAnimatingBoardId(null), 800);
@@ -2494,7 +2707,10 @@ export default function MallangApp() {
                     setGrapeBoards(boards => boards.map(b =>
                       b.id === board.id ? { ...b, current: newCurrent } : b
                     ));
-                    setUser(u => ({ ...u, grapePoints: u.grapePoints + board.perSuccess }));
+                    if (authUser) {
+                      const { error } = await earnGrapes(authUser.uid, user.coupleId || null, board.perSuccess, 'grape_board_progress', { boardId: board.id });
+                      if (error) showToast(error, "error");
+                    }
                     if (willComplete) {
                       setTimeout(() => {
                         setRewardBoardTitle(board.title);
@@ -2523,6 +2739,14 @@ export default function MallangApp() {
                     display: "flex", alignItems: "center", gap: 3,
                   }}>
                     <Settings size={12} /> 수정
+                  </button>
+                  <button onClick={() => setConfirmDeleteBoard(board.id)} style={{
+                    padding: "6px 10px", borderRadius: 8,
+                    background: colors.roseLight, border: "none",
+                    fontSize: 12, color: colors.rose, cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 3,
+                  }}>
+                    <Trash2 size={12} /> 삭제
                   </button>
                 </div>
               </div>
@@ -2687,7 +2911,7 @@ export default function MallangApp() {
         <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text, marginBottom: 12 }}>
           💌 {partnerDisplayName}님에게 칭찬하기
         </h3>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, width: "100%", boxSizing: "border-box" }}>
           <input
             type="text"
             placeholder="칭찬 한 마디를 적어주세요"
@@ -2695,15 +2919,16 @@ export default function MallangApp() {
             onChange={e => setPraiseText(e.target.value)}
             onKeyDown={e => e.key === "Enter" && sendPraise()}
             style={{
-              flex: 1, padding: "12px 14px", borderRadius: 12,
+              flex: 1, minWidth: 0, padding: "12px 14px", borderRadius: 12,
               border: `1.5px solid ${colors.border}`, fontSize: 13,
               outline: "none", boxSizing: "border-box",
             }}
           />
           <button onClick={sendPraise} style={{
-            padding: "12px 16px", borderRadius: 12,
+            padding: "12px 14px", borderRadius: 12,
             background: colors.grape, color: "#fff", border: "none",
             cursor: "pointer", display: "flex", alignItems: "center",
+            flexShrink: 0,
           }}>
             <Send size={16} />
           </button>
@@ -2733,15 +2958,41 @@ export default function MallangApp() {
         <div key={p.id} style={{
           background: "#fff", borderRadius: 14, padding: "14px 16px",
           border: `1px solid ${colors.border}`, marginBottom: 8,
-          display: "flex", justifyContent: "space-between", alignItems: "center",
         }}>
-          <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: colors.primary }}>{p.from}</span>
               <span style={{ fontSize: 11, color: colors.textTertiary }}>· {p.date}</span>
             </div>
-            <p style={{ fontSize: 13, color: colors.text, marginTop: 4 }}>{p.message}</p>
+            {p.from === (user.name || "나") && (
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={() => { setEditPraiseId(p.id); setEditPraiseText(p.message); }} style={{
+                  padding: "3px 8px", borderRadius: 6, background: "#F3F4F6",
+                  border: "none", fontSize: 10, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
+                }}>수정</button>
+                <button onClick={() => setConfirmDeletePraise(p.id)} style={{
+                  padding: "3px 8px", borderRadius: 6, background: colors.roseLight,
+                  border: "none", fontSize: 10, fontWeight: 600, color: colors.rose, cursor: "pointer",
+                }}>삭제</button>
+              </div>
+            )}
           </div>
+          {editPraiseId === p.id ? (
+            <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+              <input type="text" value={editPraiseText} onChange={e => setEditPraiseText(e.target.value)}
+                style={{ flex: 1, padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${colors.border}`, fontSize: 13, outline: "none", boxSizing: "border-box" }} />
+              <button onClick={() => {
+                if (editPraiseText.trim()) {
+                  setPraiseLog(prev => prev.map(pr => pr.id === p.id ? { ...pr, message: editPraiseText.trim() } : pr));
+                  showToast("칭찬이 수정되었어요! ✏️");
+                }
+                setEditPraiseId(null); setEditPraiseText("");
+              }} style={{ padding: "8px 12px", borderRadius: 8, background: colors.primary, color: "#fff", border: "none", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>저장</button>
+              <button onClick={() => { setEditPraiseId(null); setEditPraiseText(""); }} style={{ padding: "8px 10px", borderRadius: 8, background: "#F3F4F6", border: "none", fontSize: 12, fontWeight: 600, color: colors.textSecondary, cursor: "pointer" }}>취소</button>
+            </div>
+          ) : (
+            <p style={{ fontSize: 13, color: colors.text, marginTop: 4 }}>{p.message}</p>
+          )}
         </div>
       ))}
       {praiseLog.length > 10 && (
@@ -2858,7 +3109,14 @@ export default function MallangApp() {
                       </div>
                       <div style={{ display: "flex", gap: 4, justifyContent: "center", marginTop: 4 }}>
                         {coupon.status === "draft" && (
-                          <button onClick={() => setConfirmSendCoupon(coupon.id)} style={{
+                          <button onClick={() => {
+                            if (!user.partnerConnected) {
+                              setPartnerRequiredAction("coupon");
+                              setShowPartnerRequiredPopup(true);
+                              return;
+                            }
+                            setConfirmSendCoupon(coupon.id);
+                          }} style={{
                             padding: "5px 10px", borderRadius: 6,
                             background: `linear-gradient(135deg, ${colors.primary}, ${colors.primaryDark})`,
                             border: "none", fontSize: 10, fontWeight: 700, color: "#fff", cursor: "pointer",
@@ -3168,9 +3426,12 @@ export default function MallangApp() {
                   }}>유효기간 D-{daysLeft}</span>
                 </div>
                 <div style={{ marginBottom: 16 }}/>
-                <button onClick={() => {
+                <button onClick={async () => {
                   if (!canBuy) { showToast("포도알이 부족해요 🍇"); return; }
-                  setUser(u => ({ ...u, grapePoints: u.grapePoints - sc.grapes }));
+                  if (authUser) {
+                    const { error } = await spendGrapes(authUser.uid, user.coupleId || null, sc.grapes, 'coupon_purchase', { couponTitle: sc.title });
+                    if (error) { showToast(error); return; }
+                  }
                   setMyCoupons(prev => [...prev, {
                     id: Date.now(), title: sc.title, desc: sc.desc,
                     from: sc.registeredBy, to: user.name, expiry: sc.expiry, status: "sent", origin: "shop",
@@ -3217,11 +3478,14 @@ export default function MallangApp() {
               <p style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 20 }}>
                 {currencyIcon} {cost.toLocaleString()} {currencyLabel}으로 {partnerDisplayName}님에게 선물할까요?
               </p>
-              <button onClick={() => {
+              <button onClick={async () => {
                 if (isGifticon) {
                   setUser(u => ({ ...u, mallangCredits: u.mallangCredits - selectedGift.credits }));
                 } else {
-                  setUser(u => ({ ...u, grapePoints: u.grapePoints - selectedGift.grapes }));
+                  if (authUser) {
+                    const { error } = await spendGrapes(authUser.uid, user.coupleId || null, selectedGift.grapes, 'gift_purchase', { giftName: selectedGift.name });
+                    if (error) { showToast(error); return; }
+                  }
                 }
                 setSelectedGift(null);
                 showToast(`${partnerDisplayName}님에게 ${selectedGift.name}을(를) 선물했어요! 🎉`);
@@ -3295,7 +3559,6 @@ export default function MallangApp() {
           const totalBoards = grapeBoards.length;
           const sentCoupons = myCoupons.filter(c => c.from === user.name).length;
           const receivedCoupons = myCoupons.filter(c => c.to === user.name && c.status !== "draft").length;
-          const usedCoupons = myCoupons.filter(c => c.status === "used").length;
           const totalGrapes = user.grapePoints;
           const choreCompletionRate = totalChores > 0 ? Math.round((totalChoresCompleted / totalChores) * 100) : 0;
           const boardCompletionRate = totalBoards > 0 ? Math.round((completedBoards / totalBoards) * 100) : 0;
@@ -3338,19 +3601,19 @@ export default function MallangApp() {
             background: "#fff", borderRadius: 16, padding: "20px",
             border: `1px solid ${colors.border}`, marginBottom: 12,
           }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text, marginBottom: 12 }}>🍇 포도알 현황</h3>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text, marginBottom: 12 }}>🍇 말랑 현황</h3>
             <div style={{ display: "flex", justifyContent: "space-around", textAlign: "center" }}>
               <div>
                 <div style={{ fontSize: 24, fontWeight: 800, color: colors.grape }}>{totalGrapes}</div>
                 <div style={{ fontSize: 11, color: colors.textTertiary }}>보유 포도알</div>
               </div>
               <div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: colors.primary }}>{boardCompletionRate}%</div>
-                <div style={{ fontSize: 11, color: colors.textTertiary }}>포도판 달성률</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: colors.rose }}>{hearts}</div>
+                <div style={{ fontSize: 11, color: colors.textTertiary }}>보유 하트</div>
               </div>
               <div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: colors.warm }}>{usedCoupons}</div>
-                <div style={{ fontSize: 11, color: colors.textTertiary }}>사용한 쿠폰</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: colors.primary }}>{boardCompletionRate}%</div>
+                <div style={{ fontSize: 11, color: colors.textTertiary }}>포도판 달성률</div>
               </div>
             </div>
           </div>
@@ -3388,10 +3651,18 @@ export default function MallangApp() {
           }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
               <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>😊 이번 달 기분 기록</h3>
-              <button onClick={() => setShowMoodPopup(true)} style={{
-                background: colors.primaryLight, border: "none", borderRadius: 8,
-                padding: "6px 12px", fontSize: 11, fontWeight: 600, color: colors.primary, cursor: "pointer",
-              }}>오늘 기분 기록</button>
+              {(() => {
+                const today = new Date().toISOString().split('T')[0];
+                const todayDone = moodHistory.some(m => m.date === today);
+                return (
+                  <button onClick={() => !todayDone && setShowMoodPopup(true)} style={{
+                    background: todayDone ? "#F3F4F6" : colors.primaryLight, border: "none", borderRadius: 8,
+                    padding: "6px 12px", fontSize: 11, fontWeight: 600,
+                    color: todayDone ? colors.textTertiary : colors.primary,
+                    cursor: todayDone ? "default" : "pointer",
+                  }}>{todayDone ? "오늘 기록 완료 ✅" : "오늘 기분 기록"}</button>
+                );
+              })()}
             </div>
             {(() => {
               const currentMonth = new Date().toISOString().substring(0, 7);
@@ -3733,10 +4004,11 @@ export default function MallangApp() {
           {(() => {
             const monthData = conversationHistory.filter(item => {
               if (!item.timestamp) return false;
-              const itemMonth = item.timestamp.substring(0, 7); // YYYY-MM
+              const itemMonth = item.timestamp.substring(0, 7);
               return itemMonth === selectedReportMonth;
             });
-            const hasData = monthData.length > 0;
+            const hasBoards = grapeBoards.length > 0;
+            const hasData = monthData.length > 0 || praiseLog.length > 0 || hasBoards;
 
             // 데이터가 없으면 디폴트 화면
             if (!hasData) {
@@ -3755,7 +4027,7 @@ export default function MallangApp() {
                       return `${year}년 ${parseInt(month)}월`;
                     })()}에는 대화 기록이 없네요.<br/>
                     <strong style={{ color: colors.primary }}>대화 도우미</strong>를 사용하거나<br/>
-                    <strong style={{ color: colors.primary }}>대화 분석</strong>을 해보세요!
+                    <strong style={{ color: colors.primary }}>칭찬</strong>을 해보세요!
                   </p>
 
                   <div style={{
@@ -4038,12 +4310,15 @@ export default function MallangApp() {
                 🍇 포도알 10개로 열람 가능
               </p>
 
-              <button onClick={() => {
+              <button onClick={async () => {
                 if (user.grapePoints < 10) {
                   showToast("포도알이 부족해요! (10개 필요) 🍇");
                   return;
                 }
-                setUser(u => ({ ...u, grapePoints: u.grapePoints - 10 }));
+                if (authUser) {
+                  const { error } = await spendGrapes(authUser.uid, user.coupleId || null, 10, 'report_unlock');
+                  if (error) { showToast(error); return; }
+                }
                 setReportTodayUnlocked(true);
                 showToast("심화 보고서가 열렸어요! 📈");
               }} style={{
@@ -4119,31 +4394,54 @@ export default function MallangApp() {
                 <button onClick={async () => {
                   setVoiceAnalyzing(true);
                   try {
-                    const formData = new FormData();
-                    formData.append('audio', voiceFile);
+                    let result;
+                    // 서버 API 먼저 시도
+                    try {
+                      const formData = new FormData();
+                      formData.append('audio', voiceFile);
+                      const response = await fetch('/api/analyze', {
+                        method: 'POST',
+                        body: formData,
+                      });
+                      if (!response.ok) throw new Error('서버 API 실패');
+                      result = await response.json();
+                    } catch {
+                      // 직접 OpenAI Whisper + GPT 호출
+                      const apiKey = process.env.REACT_APP_OPENAI_API_KEY;
+                      if (!apiKey) throw new Error('API 키 없음');
 
-                    const response = await fetch('/api/analyze', {
-                      method: 'POST',
-                      body: formData,
-                    });
+                      // Step 1: Whisper 음성 인식
+                      const whisperForm = new FormData();
+                      whisperForm.append('file', voiceFile);
+                      whisperForm.append('model', 'whisper-1');
+                      whisperForm.append('language', 'ko');
+                      whisperForm.append('response_format', 'text');
+                      const whisperRes = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+                        method: 'POST',
+                        headers: { 'Authorization': `Bearer ${apiKey}` },
+                        body: whisperForm,
+                      });
+                      if (!whisperRes.ok) throw new Error('음성 인식 실패');
+                      const transcription = await whisperRes.text();
 
-                    if (!response.ok) {
-                      throw new Error('분석 실패');
+                      // Step 2: GPT 분석
+                      const analysisPrompt = `당신은 커플 대화 분석 전문가입니다. 아래 대화 내용을 분석해주세요.
+
+대화 내용:
+${transcription}
+
+다음 JSON 형식으로 분석 결과를 반환해주세요:
+{"topic":"전체 대화 주제 (20자 이내)","moodSummary":"대화 분위기 요약 (2-3문장)","conflictContribution":{"A":숫자,"B":숫자,"interpretation":"갈등 기여도 해석"},"personality":{"A":{"type":"성향 타입","desc":"설명"},"B":{"type":"성향 타입","desc":"설명"}},"goodPoints":{"A":["잘한 점"],"B":["잘한 점"]},"improvements":{"A":["개선 포인트"],"B":["개선 포인트"]},"actionSentences":["실천 문장 1","실천 문장 2"],"tone":{"positive":숫자,"neutral":숫자,"negative":숫자}}`;
+                      result = await callOpenAI([
+                        { role: 'system', content: '당신은 커플 대화 분석 전문 상담사입니다.' },
+                        { role: 'user', content: analysisPrompt },
+                      ]);
+                      result.duration = "분석 완료";
                     }
-
-                    const result = await response.json();
                     setVoiceResult(result);
                   } catch (error) {
                     console.error('Analysis error:', error);
-                    setVoiceAnalyzing(false);
-                    // 로컬 환경에서는 API가 없어서 실패함
-                    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-                    showToast(
-                      isLocal
-                        ? "로컬에서는 분석이 불가능해요. Vercel 배포 후 사용해주세요!"
-                        : "분석에 실패했어요. 다시 시도해주세요.",
-                      "error"
-                    );
+                    showToast("분석에 실패했어요. 다시 시도해주세요.", "error");
                   }
                   setVoiceAnalyzing(false);
                 }} style={{
@@ -4339,12 +4637,15 @@ export default function MallangApp() {
                 🍇 포도알 10개로 이용 가능
               </p>
 
-              <button onClick={() => {
+              <button onClick={async () => {
                 if (user.grapePoints < 10) {
                   showToast("포도알이 부족해요! (10개 필요) 🍇");
                   return;
                 }
-                setUser(u => ({ ...u, grapePoints: u.grapePoints - 10 }));
+                if (authUser) {
+                  const { error } = await spendGrapes(authUser.uid, user.coupleId || null, 10, 'voice_analysis_unlock');
+                  if (error) { showToast(error); return; }
+                }
                 setVoiceUnlocked(true);
                 showToast("대화 분석 기능이 열렸어요! 🎙️");
               }} style={{
@@ -4413,57 +4714,69 @@ export default function MallangApp() {
                       setJudgeAnalyzing(true);
 
                       try {
-                        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${process.env.REACT_APP_OPENAI_API_KEY}`,
-                          },
-                          body: JSON.stringify({
-                            model: 'gpt-4o-mini',
-                            messages: [
-                              {
-                                role: 'system',
-                                content: `당신은 공정한 커플 갈등 심판관입니다. 상황을 객관적으로 분석하고 누가 더 잘못했는지 판별해주세요.
+                        let result;
+                        try {
+                          const response = await fetch('/api/judge', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                              'Authorization': `Bearer ${authUser ? await authUser.getIdToken() : ''}`,
+                            },
+                            body: JSON.stringify({ text: judgeText }),
+                          });
+                          if (!response.ok) throw new Error('서버 API 실패');
+                          result = await response.json();
+                        } catch {
+                          // 직접 OpenAI 호출
+                          const systemPrompt = `너는 갈등을 중재하는 상담가가 아니라, 행동 기반으로 책임 비율을 판정하는 심판 AI다.
 
-반드시 다음 JSON 형식으로 응답하세요:
+A는 상황을 작성한 사람, B는 상대방이다.
+
+[1단계: 책임 비율 산출]
+- 감정이 아니라 행동을 기준으로 책임을 계산한다.
+- 억지 균형(50:50, 60:40)을 만들지 않는다.
+- 명백한 위반이 있으면 높은 비율을 부여한다.
+- 책임이 한쪽에 집중될 수 있다 (0~100 허용).
+- aFaultPercent + bFaultPercent = 반드시 100
+
+판단 기준:
+1) 사실 위반: 약속 존재 여부, 약속 위반 여부, 사전 통보 여부, 거짓말 여부, 책임 인정 여부, 상대 공격 여부, 반복 여부
+2) 고의성: 고의인가, 반복 패턴인가, 즉시 사과했는가
+3) 감정 과장 여부 (보조 요소)
+
+[2단계: 잘못 항목 분해]
+- 추상적 표현 금지 ("배려가 부족했다" 같은 표현 금지)
+- 실제 행동 단위로 잘못을 정리한다 ("설거지 약속을 어기고 게임을 했다" 같은 구체적 행동)
+- 감정 비난이 아니라 행동 중심으로 기술한다
+
+[3단계: 화해 문장 생성]
+- 방어심을 낮추는 문장 생성
+- 책임 공방 유도 금지
+- 짧고 실제로 말할 수 있는 문장으로 작성
+- "너 때문에" 금지, 과한 사과 강요 금지
+- 자연스러운 일상 대화 톤
+- 한 문장 2줄 이내
+
+반드시 다음 JSON 형식으로 응답하라:
 {
   "verdict": "A" 또는 "B" 또는 "둘다",
-  "aFaultPercent": 0-100 사이 숫자,
-  "bFaultPercent": 0-100 사이 숫자,
-  "summary": "상황 요약 (2문장)",
-  "aFaults": ["A의 잘못 1", "A의 잘못 2"],
-  "bFaults": ["B의 잘못 1", "B의 잘못 2"],
-  "advice": "두 사람에게 드리는 조언 (2-3문장)",
-  "peacePhrase": "화해를 위한 대화 시작 문장"
-}
-
-A는 상황을 작성한 사람, B는 상대방입니다.`
-                              },
-                              { role: 'user', content: judgeText }
-                            ],
-                            temperature: 0.7,
-                          }),
-                        });
-
-                        if (response.ok) {
-                          const data = await response.json();
-                          setJudgeResult(JSON.parse(data.choices[0].message.content));
-                        } else {
-                          throw new Error('API 호출 실패');
+  "aFaultPercent": 0-100,
+  "bFaultPercent": 0-100,
+  "summary": "판단 근거 3줄 이내 요약. 감정 위로 포함하지 말 것.",
+  "aFaults": ["A의 구체적 행동 잘못 1", "행동 잘못 2"],
+  "bFaults": ["B의 구체적 행동 잘못 1", "행동 잘못 2"],
+  "aPhrases": ["A가 먼저 건넬 수 있는 화해 문장 1", "문장 2", "문장 3"],
+  "bPhrases": ["B가 먼저 건넬 수 있는 화해 문장 1", "문장 2", "문장 3"]
+}`;
+                          result = await callOpenAI([
+                            { role: 'system', content: systemPrompt },
+                            { role: 'user', content: judgeText },
+                          ]);
                         }
+                        setJudgeResult(result);
                       } catch (error) {
-                        // Fallback 데모 데이터
-                        setJudgeResult({
-                          verdict: "둘다",
-                          aFaultPercent: 40,
-                          bFaultPercent: 60,
-                          summary: "양쪽 모두 상대방의 입장을 충분히 고려하지 못했어요. 하지만 약속을 지키지 않은 B의 잘못이 조금 더 커요.",
-                          aFaults: ["감정적으로 화를 표현한 점", "대화 대신 지적부터 한 점"],
-                          bFaults: ["약속을 지키지 않은 점", "자신의 잘못을 인정하지 않은 점"],
-                          advice: "약속을 어긴 것에 대해 B가 먼저 사과하고, A도 화난 감정을 차분히 전달하는 연습이 필요해요.",
-                          peacePhrase: "우리 둘 다 서운했던 것 같아. 차분히 이야기해볼까?"
-                        });
+                        console.error('Judge API error:', error);
+                        showToast("AI 분석에 실패했어요. 다시 시도해주세요.", "error");
                       } finally {
                         setJudgeAnalyzing(false);
                       }
@@ -4535,35 +4848,56 @@ A는 상황을 작성한 사람, B는 상대방입니다.`
                     </div>
                   </div>
 
-                  {/* 조언 */}
+                  {/* 화해 문장 - 내가 건넬 문장 */}
                   <div style={{
-                    background: colors.mintLight, borderRadius: 14, padding: "16px", marginBottom: 12,
+                    background: "#fff", borderRadius: 14, padding: "16px", marginBottom: 12,
+                    border: `1px solid ${colors.border}`,
                   }}>
-                    <h3 style={{ fontSize: 14, fontWeight: 700, color: colors.mint, marginBottom: 8 }}>💚 AI의 조언</h3>
-                    <p style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.6 }}>{judgeResult.advice}</p>
+                    <h3 style={{ fontSize: 14, fontWeight: 700, color: colors.primary, marginBottom: 10 }}>🕊️ 내가 먼저 건넬 수 있는 말</h3>
+                    {(judgeResult.aPhrases || []).map((phrase, i) => (
+                      <div key={i} style={{
+                        background: colors.primaryLight, borderRadius: 10, padding: "10px 12px",
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        marginBottom: i < (judgeResult.aPhrases || []).length - 1 ? 8 : 0,
+                      }}>
+                        <p style={{ fontSize: 13, color: colors.primary, fontWeight: 500, flex: 1, margin: 0 }}>"{phrase}"</p>
+                        <button onClick={() => {
+                          navigator.clipboard?.writeText?.(phrase);
+                          showToast("복사되었어요!");
+                        }} style={{
+                          background: colors.primary, border: "none", borderRadius: 8,
+                          padding: "6px 10px", cursor: "pointer", flexShrink: 0, marginLeft: 8,
+                        }}>
+                          <Copy size={14} color="#fff" />
+                        </button>
+                      </div>
+                    ))}
                   </div>
 
-                  {/* 화해 문장 */}
+                  {/* 화해 문장 - 상대가 건넬 문장 */}
                   <div style={{
                     background: "#fff", borderRadius: 14, padding: "16px", marginBottom: 16,
                     border: `1px solid ${colors.border}`,
                   }}>
-                    <h3 style={{ fontSize: 14, fontWeight: 700, color: colors.text, marginBottom: 8 }}>🕊️ 화해 시작 문장</h3>
-                    <div style={{
-                      background: colors.primaryLight, borderRadius: 10, padding: "12px",
-                      display: "flex", alignItems: "center", justifyContent: "space-between",
-                    }}>
-                      <p style={{ fontSize: 13, color: colors.primary, fontWeight: 500, flex: 1 }}>"{judgeResult.peacePhrase}"</p>
-                      <button onClick={() => {
-                        navigator.clipboard?.writeText?.(judgeResult.peacePhrase);
-                        showToast("복사되었어요! 📋");
-                      }} style={{
-                        background: colors.primary, border: "none", borderRadius: 8,
-                        padding: "6px 10px", cursor: "pointer",
+                    <h3 style={{ fontSize: 14, fontWeight: 700, color: colors.rose, marginBottom: 10 }}>💬 상대가 먼저 건넬 수 있는 말</h3>
+                    {(judgeResult.bPhrases || []).map((phrase, i) => (
+                      <div key={i} style={{
+                        background: colors.roseLight, borderRadius: 10, padding: "10px 12px",
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        marginBottom: i < (judgeResult.bPhrases || []).length - 1 ? 8 : 0,
                       }}>
-                        <Copy size={14} color="#fff" />
-                      </button>
-                    </div>
+                        <p style={{ fontSize: 13, color: colors.rose, fontWeight: 500, flex: 1, margin: 0 }}>"{phrase}"</p>
+                        <button onClick={() => {
+                          navigator.clipboard?.writeText?.(phrase);
+                          showToast("복사되었어요!");
+                        }} style={{
+                          background: colors.rose, border: "none", borderRadius: 8,
+                          padding: "6px 10px", cursor: "pointer", flexShrink: 0, marginLeft: 8,
+                        }}>
+                          <Copy size={14} color="#fff" />
+                        </button>
+                      </div>
+                    ))}
                   </div>
 
                   <button onClick={() => { setJudgeResult(null); setJudgeText(""); }} style={{
@@ -4594,12 +4928,15 @@ A는 상황을 작성한 사람, B는 상대방입니다.`
                 🍇 포도알 10개로 이용 가능
               </p>
 
-              <button onClick={() => {
+              <button onClick={async () => {
                 if (user.grapePoints < 10) {
                   showToast("포도알이 부족해요! (10개 필요) 🍇");
                   return;
                 }
-                setUser(u => ({ ...u, grapePoints: u.grapePoints - 10 }));
+                if (authUser) {
+                  const { error } = await spendGrapes(authUser.uid, user.coupleId || null, 10, 'judge_unlock');
+                  if (error) { showToast(error); return; }
+                }
                 setJudgeUnlocked(true);
                 showToast("갈등 심판 기능이 열렸어요! ⚖️");
               }} style={{
@@ -4723,18 +5060,159 @@ A는 상황을 작성한 사람, B는 상대방입니다.`
                   🌐 {t("language")}
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  {LANGS.map(l => (
-                    <button key={l} onClick={() => setLang(l)} style={{
-                      padding: "8px 16px", borderRadius: 20, border: "none", cursor: "pointer",
-                      fontSize: 13, fontWeight: lang === l ? 700 : 500,
-                      background: lang === l ? colors.primary : colors.primaryLight,
-                      color: lang === l ? "#fff" : colors.primary,
-                      transition: "all 0.2s",
-                    }}>
-                      {LANG_LABELS[l]}
-                    </button>
-                  ))}
+                  {LANGS.map(l => {
+                    const isKorean = l === "ko";
+                    const isActive = lang === l;
+                    return (
+                      <button key={l} onClick={() => {
+                        if (isKorean) { setLang(l); }
+                        else { showToast("준비중입니다"); }
+                      }} style={{
+                        padding: "8px 16px", borderRadius: 20, border: "none",
+                        cursor: isKorean ? "pointer" : "default",
+                        fontSize: 13, fontWeight: isActive ? 700 : 500,
+                        background: isActive ? colors.primary : isKorean ? colors.primaryLight : "#F3F4F6",
+                        color: isActive ? "#fff" : isKorean ? colors.primary : "#C0C0C0",
+                        opacity: isKorean ? 1 : 0.5,
+                        transition: "all 0.2s",
+                      }}>
+                        {LANG_LABELS[l]}
+                      </button>
+                    );
+                  })}
                 </div>
+              </div>
+
+              {/* 짝꿍 연결 */}
+              <div style={{
+                background: "#fff", borderRadius: 16, padding: "18px 20px",
+                border: `1px solid ${colors.border}`, marginBottom: 12,
+              }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: colors.text, marginBottom: 12 }}>
+                  💑 짝꿍 연결
+                </div>
+
+                {/* 나의 초대 코드 */}
+                <div style={{
+                  background: colors.primaryLight, borderRadius: 12, padding: "14px 16px",
+                  textAlign: "center", marginBottom: 12,
+                }}>
+                  <p style={{ fontSize: 11, color: colors.textSecondary, marginBottom: 4 }}>나의 초대 코드</p>
+                  <div style={{ fontSize: 20, fontWeight: 800, color: colors.primary, letterSpacing: 3, marginBottom: 8 }}>
+                    {user.inviteCode || "---"}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
+                    {!user.inviteCode ? (
+                      <button onClick={async () => { await generateInviteCodeOnce(); showToast("초대 코드가 생성되었어요!"); }} style={{
+                        background: colors.primary, color: "#fff", border: "none",
+                        padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                        display: "inline-flex", alignItems: "center", gap: 4,
+                      }}>
+                        <Plus size={12} /> 코드 생성하기
+                      </button>
+                    ) : (
+                      <>
+                        <button onClick={() => {
+                          if (navigator.clipboard && navigator.clipboard.writeText) {
+                            navigator.clipboard.writeText(user.inviteCode).then(() => showToast("초대 코드가 복사되었어요!"));
+                          } else {
+                            const ta = document.createElement("textarea"); ta.value = user.inviteCode; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+                            showToast("초대 코드가 복사되었어요!");
+                          }
+                        }} style={{
+                          background: colors.primary, color: "#fff", border: "none",
+                          padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                        }}>
+                          <Copy size={12} /> 복사
+                        </button>
+                        <button onClick={async () => {
+                          const shareText = `말랑에서 짝꿍이 되어주세요! 초대 코드: ${user.inviteCode}`;
+                          if (navigator.share) {
+                            try { await navigator.share({ title: "말랑 - 짝꿍 초대", text: shareText }); } catch (e) { /* 취소 */ }
+                          } else {
+                            if (navigator.clipboard && navigator.clipboard.writeText) {
+                              navigator.clipboard.writeText(shareText).then(() => showToast("공유 메시지가 복사되었어요!"));
+                            } else {
+                              const ta = document.createElement("textarea"); ta.value = shareText; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+                              showToast("공유 메시지가 복사되었어요!");
+                            }
+                          }
+                        }} style={{
+                          background: colors.primaryLight, color: colors.primary, border: `1px solid ${colors.primary}`,
+                          padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: "pointer",
+                          display: "inline-flex", alignItems: "center", gap: 4,
+                        }}>
+                          <Share2 size={12} /> 공유
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* 짝꿍 연결 상태 */}
+                {user.partnerConnected ? (
+                  <div style={{
+                    background: colors.mintLight, borderRadius: 12, padding: "12px 14px",
+                    display: "flex", alignItems: "center", gap: 10,
+                  }}>
+                    <div style={{
+                      width: 32, height: 32, borderRadius: "50%", background: colors.mint,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <Heart size={14} color="#fff" />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: colors.mint }}>
+                        {user.partnerName || "짝꿍"}님과 연결됨
+                      </div>
+                      <div style={{ fontSize: 11, color: colors.textTertiary }}>실시간 동기화 중</div>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <p style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8 }}>
+                      짝꿍의 초대 코드를 입력하면 연결돼요
+                    </p>
+                    <div style={{ display: "flex", gap: 8, width: "100%", boxSizing: "border-box" }}>
+                      <input
+                        type="text"
+                        placeholder="짝꿍 초대 코드"
+                        value={welcomePartnerCode}
+                        onChange={e => setWelcomePartnerCode(e.target.value.toUpperCase())}
+                        style={{
+                          flex: 1, minWidth: 0, padding: "10px 12px", borderRadius: 10,
+                          border: `1.5px solid ${colors.border}`, fontSize: 14,
+                          fontWeight: 600, letterSpacing: 2, textAlign: "center",
+                          outline: "none", boxSizing: "border-box",
+                        }}
+                      />
+                      <button onClick={async () => {
+                        if (!welcomePartnerCode.trim()) {
+                          showToast("코드를 입력해주세요", "error");
+                          return;
+                        }
+                        if (authUser) {
+                          const { error } = await createPair(authUser.uid, welcomePartnerCode.trim());
+                          if (error) {
+                            showToast(error, "error");
+                          } else {
+                            setUser(u => ({ ...u, partnerConnected: true }));
+                            setWelcomePartnerCode("");
+                            showToast("짝꿍과 연결되었어요! 💜");
+                          }
+                        }
+                      }} style={{
+                        padding: "10px 14px", borderRadius: 10,
+                        background: colors.primary, color: "#fff", border: "none",
+                        fontSize: 13, fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+                        flexShrink: 0,
+                      }}>
+                        연결
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 내 대화 취향 */}
@@ -4828,19 +5306,39 @@ A는 상황을 작성한 사람, B는 상대방입니다.`
                       </div>
                     )}
                   </div>
-                  {[
-                    { label: "초대 코드", value: user.inviteCode },
-                    { label: "오늘 분석", value: reportTodayUnlocked ? "열람 완료 ✅" : (!reportFreeUsed ? "첫 분석 무료 🎁" : "광고 시청 필요 🔒") },
-                  ].map((item, i) => (
-                    <div key={i} style={{
-                      display: "flex", justifyContent: "space-between", alignItems: "center",
-                      padding: "8px 0",
-                      borderTop: `1px solid ${colors.border}`,
+                  <div style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "8px 0", borderTop: `1px solid ${colors.border}`,
+                  }}>
+                    <span style={{ fontSize: 13, color: colors.textSecondary }}>초대 코드</span>
+                    <button onClick={() => {
+                      if (user.inviteCode) {
+                        if (navigator.clipboard && navigator.clipboard.writeText) {
+                          navigator.clipboard.writeText(user.inviteCode).then(() => showToast("초대 코드가 복사되었어요!"));
+                        } else {
+                          const ta = document.createElement("textarea"); ta.value = user.inviteCode; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); document.body.removeChild(ta);
+                          showToast("초대 코드가 복사되었어요!");
+                        }
+                      } else {
+                        generateInviteCodeOnce().then(() => showToast("초대 코드가 생성되었어요!"));
+                      }
+                    }} style={{
+                      fontSize: 13, fontWeight: 600, color: colors.primary,
+                      background: "none", border: "none", cursor: "pointer",
+                      display: "flex", alignItems: "center", gap: 4,
                     }}>
-                      <span style={{ fontSize: 13, color: colors.textSecondary }}>{item.label}</span>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>{item.value}</span>
-                    </div>
-                  ))}
+                      {user.inviteCode || "코드 생성하기"} <Copy size={12} />
+                    </button>
+                  </div>
+                  <div style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "8px 0", borderTop: `1px solid ${colors.border}`,
+                  }}>
+                    <span style={{ fontSize: 13, color: colors.textSecondary }}>오늘 분석</span>
+                    <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>
+                      {reportTodayUnlocked ? "열람 완료 ✅" : (!reportFreeUsed ? "첫 분석 무료 🎁" : "포도알 10개 필요 🔒")}
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -5082,6 +5580,12 @@ A는 상황을 작성한 사람, B는 상대방입니다.`
                 }}>보관하기</button>
                 <button onClick={() => {
                   if (!newCoupon.title.trim() || !newCoupon.expiry) return;
+                  if (!user.partnerConnected) {
+                    setShowCouponCreate(false);
+                    setPartnerRequiredAction("coupon");
+                    setShowPartnerRequiredPopup(true);
+                    return;
+                  }
                   setMyCoupons(prev => [...prev, { id: Date.now(), title: newCoupon.title, desc: newCoupon.desc || "", from: user.name, to: partnerDisplayName, expiry: newCoupon.expiry, status: "sent", origin: "direct" }]);
                   showToast(`${partnerDisplayName}님에게 쿠폰을 보냈어요! 🎫`);
                   setNewCoupon({ title: "", desc: "", expiry: "" }); setEditCouponId(null); setShowCouponCreate(false);
@@ -5351,6 +5855,108 @@ A는 상황을 작성한 사람, B는 상대방입니다.`
           </div>
         );
       })()}
+
+      {/* 짝꿍 미등록 경고 팝업 */}
+      {showPartnerRequiredPopup && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+          zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: "#fff", borderRadius: 20, padding: "28px 24px",
+            width: "85%", maxWidth: 320, textAlign: "center",
+          }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>🔗</div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
+              짝꿍을 등록해주세요
+            </h3>
+            <p style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.6, marginBottom: 20 }}>
+              {partnerRequiredAction === "praise"
+                ? "칭찬을 보내려면 먼저 짝꿍과 연결해야 해요."
+                : "쿠폰을 보내려면 먼저 짝꿍과 연결해야 해요."}
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setShowPartnerRequiredPopup(false)} style={{
+                flex: 1, padding: "13px", borderRadius: 12,
+                background: "#F3F4F6", color: colors.textSecondary,
+                border: "none", fontSize: 14, fontWeight: 600, cursor: "pointer",
+              }}>닫기</button>
+              <button onClick={() => {
+                setShowPartnerRequiredPopup(false);
+                setShowSettings(true);
+              }} style={{
+                flex: 1, padding: "13px", borderRadius: 12,
+                background: `linear-gradient(135deg, ${colors.primary}, ${colors.primaryDark})`,
+                color: "#fff", border: "none", fontSize: 14, fontWeight: 700, cursor: "pointer",
+              }}>짝꿍코드<br/>등록하기</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 포도판 삭제 확인 팝업 */}
+      {confirmDeleteBoard && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center",
+        }} onClick={() => setConfirmDeleteBoard(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: "#fff", borderRadius: 20, padding: "24px", width: "82%", maxWidth: 300, textAlign: "center",
+          }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>🍇</div>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
+              포도판을 삭제할까요?
+            </h3>
+            <p style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.6, marginBottom: 20 }}>
+              삭제하면 복구할 수 없어요.
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setConfirmDeleteBoard(null)} style={{
+                flex: 1, padding: "12px", borderRadius: 12, background: "#F3F4F6",
+                border: "none", fontSize: 14, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
+              }}>취소</button>
+              <button onClick={() => {
+                setGrapeBoards(prev => prev.filter(b => b.id !== confirmDeleteBoard));
+                setConfirmDeleteBoard(null);
+                showToast("포도판이 삭제되었어요");
+              }} style={{
+                flex: 1, padding: "12px", borderRadius: 12, background: colors.rose,
+                border: "none", fontSize: 14, fontWeight: 700, color: "#fff", cursor: "pointer",
+              }}>삭제</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 칭찬 삭제 확인 팝업 */}
+      {confirmDeletePraise && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center",
+        }} onClick={() => setConfirmDeletePraise(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: "#fff", borderRadius: 20, padding: "24px", width: "82%", maxWidth: 300, textAlign: "center",
+          }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>💜</div>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: colors.text, marginBottom: 8 }}>칭찬을 삭제할까요?</h3>
+            <p style={{ fontSize: 12, color: colors.textTertiary, marginBottom: 20 }}>삭제한 칭찬은 복구할 수 없어요</p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setConfirmDeletePraise(null)} style={{
+                flex: 1, padding: "12px", borderRadius: 12, background: "#F3F4F6",
+                border: "none", fontSize: 14, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
+              }}>취소</button>
+              <button onClick={() => {
+                setPraiseLog(prev => prev.filter(p => p.id !== confirmDeletePraise));
+                setConfirmDeletePraise(null);
+                showToast("칭찬이 삭제되었어요");
+              }} style={{
+                flex: 1, padding: "12px", borderRadius: 12, background: colors.rose,
+                border: "none", fontSize: 14, fontWeight: 700, color: "#fff", cursor: "pointer",
+              }}>삭제</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 앱 종료 확인 팝업 */}
       {showExitConfirm && (

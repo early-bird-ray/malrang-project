@@ -1,0 +1,197 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================
+    // Helper Functions
+    // ============================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isAuthenticated() && request.auth.uid == uid;
+    }
+
+    function isCoupleMember(coupleData) {
+      return isAuthenticated() && request.auth.uid in coupleData.members;
+    }
+
+    function isCoupleActive(coupleData) {
+      return coupleData.status == 'active' || coupleData.status == 'paused';
+    }
+
+    // ============================================
+    // Users Collection
+    // ============================================
+    match /users/{uid} {
+      // 본인만 읽기/쓰기
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid)
+        // grapePoints는 0 이상이어야 함
+        && request.resource.data.grapePoints >= 0
+        // totalGrapesEarned는 감소 불가
+        && request.resource.data.totalGrapesEarned >= resource.data.totalGrapesEarned;
+      allow delete: if false; // 삭제 불가
+
+      // 개인 감정 기록
+      match /moodHistory/{moodId} {
+        allow read, write: if isOwner(uid);
+      }
+
+      // AI 말투 변환 기록
+      match /aiTransformHistory/{historyId} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+
+    // ============================================
+    // Couples Collection
+    // ============================================
+    match /couples/{coupleId} {
+      // members에 포함된 유저만 접근
+      allow read: if isCoupleMember(resource.data);
+      allow create: if isAuthenticated()
+        && request.auth.uid in request.resource.data.members
+        && request.resource.data.members.size() == 2
+        && request.resource.data.status == 'active';
+      allow update: if isCoupleMember(resource.data);
+      allow delete: if false; // 삭제 불가 (status로 관리)
+
+      // 포도판
+      match /grapeBoards/{boardId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create, update: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow delete: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+      }
+
+      // 포도 거래 로그 - 추가만 가능 (수정/삭제 불가)
+      match /grapeTransactions/{txId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow update, delete: if false; // 수정/삭제 불가
+      }
+
+      // 쿠폰
+      match /coupons/{couponId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        // 쿠폰 사용: toUid 본인만 "used" 전환 가능
+        allow update: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && (
+          // 보낸 사람은 draft 상태 수정 가능
+          (resource.data.fromUid == request.auth.uid && resource.data.status == 'draft')
+          // 받는 사람은 used 전환만 가능
+          || (resource.data.toUid == request.auth.uid && request.resource.data.status == 'used')
+        );
+        allow delete: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && resource.data.fromUid == request.auth.uid
+          && resource.data.status == 'draft';
+      }
+
+      // 상점 등록
+      match /shopListings/{listingId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create, update, delete: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+      }
+
+      // 칭찬 - fromUid 본인 일치 필수
+      match /praises/{praiseId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && request.resource.data.fromUid == request.auth.uid;
+        allow update, delete: if false; // 수정/삭제 불가
+      }
+
+      // 집안일
+      match /chores/{choreId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create, update, delete: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+      }
+
+      // 음성 분석 결과
+      match /voiceAnalyses/{analysisId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow update, delete: if false;
+      }
+
+      // 리포트
+      match /reports/{reportId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow update, delete: if false;
+      }
+    }
+
+    // ============================================
+    // Invite Codes Collection
+    // ============================================
+    match /inviteCodes/{code} {
+      // 누구나 코드로 조회 가능 (페어링을 위해)
+      allow read: if isAuthenticated();
+      // 코드 생성은 본인 ownerUid만
+      allow create: if isAuthenticated()
+        && request.resource.data.ownerUid == request.auth.uid;
+      // 코드 사용 시 업데이트 (usedByUid 설정)
+      allow update: if isAuthenticated()
+        && resource.data.active == true
+        && request.resource.data.usedByUid == request.auth.uid;
+      allow delete: if false;
+    }
+  }
+}
