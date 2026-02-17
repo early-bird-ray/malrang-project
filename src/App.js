@@ -906,6 +906,10 @@ export default function MallangApp() {
               if (data.savedSurveyAnswers || data.survey) {
                 setSavedSurveyAnswers(data.savedSurveyAnswers || data.survey || {});
               }
+              // 닉네임이 이미 있으면 welcome 생략하고 바로 main으로
+              if (data.displayName && data.displayName.trim()) {
+                setScreen("main");
+              }
             }
           } catch (e) {
             console.error("Failed to load user data:", e);
@@ -940,6 +944,7 @@ export default function MallangApp() {
           name: data.displayName || u.name,
           inviteCode: data.inviteCode || u.inviteCode,
           coupleId: data.activeCoupleId || '',
+          partnerConnected: !!data.activeCoupleId,
         }));
         if (data.survey && Object.keys(data.survey).length > 0) {
           setSavedSurveyAnswers(data.survey);
@@ -955,6 +960,17 @@ export default function MallangApp() {
     if (!authUser || !coupleId) return;
 
     setupCoupleListeners(coupleId, {
+      onCoupleUpdate: (coupleData) => {
+        if (coupleData?.memberProfiles && authUser) {
+          const partnerUid = coupleData.members?.find(m => m !== authUser.uid);
+          if (partnerUid && coupleData.memberProfiles[partnerUid]) {
+            setUser(u => ({
+              ...u,
+              partnerName: coupleData.memberProfiles[partnerUid].displayName || '',
+            }));
+          }
+        }
+      },
       onGrapeBoardsUpdate: (boards) => setGrapeBoards(boards),
       onCouponsUpdate: (coupons) => setMyCoupons(coupons),
       onPraisesUpdate: (praises) => setPraiseLog(praises),
@@ -1029,17 +1045,19 @@ export default function MallangApp() {
     }
   }, [screen, user.name, authLoading]);
 
-  // 하루 한 번 기분 팝업 (메인 화면 진입 시)
+  // 하루 한 번 기분 팝업 (메인 화면 진입 시, Firestore 동기화 대기)
   useEffect(() => {
     if (screen === "main") {
-      const today = new Date().toISOString().split('T')[0];
-      const todayMood = moodHistory.find(m => m.date === today);
-      if (!todayMood) {
-        setShowMoodPopup(true);
-      }
+      const timer = setTimeout(() => {
+        const today = new Date().toISOString().split('T')[0];
+        const todayMood = moodHistory.find(m => m.date === today);
+        if (!todayMood) {
+          setShowMoodPopup(true);
+        }
+      }, 1500);
+      return () => clearTimeout(timer);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [screen]);
+  }, [screen, moodHistory]);
 
   // localStorage 저장 (데이터 변경 시)
   useEffect(() => {
@@ -1082,6 +1100,9 @@ export default function MallangApp() {
     localStorage.setItem("mallang_surveyAnswers", JSON.stringify(savedSurveyAnswers));
   }, [savedSurveyAnswers]);
 
+  // 탭/서브탭 변경 시 스크롤 초기화
+  useEffect(() => { window.scrollTo(0, 0); }, [tab, reportSubTab]);
+
   // 안드로이드 뒤로가기 버튼 처리
   useEffect(() => {
     window.history.pushState({ screen: "main" }, "");
@@ -1091,6 +1112,7 @@ export default function MallangApp() {
       window.history.pushState({ screen: "main" }, "");
 
       // 모달이 열려있으면 모달 닫기 (우선순위 높음)
+      if (showExitConfirm) { setShowExitConfirm(false); return; }
       if (showSettings) { setShowSettings(false); setSettingsTab("main"); return; }
       if (showMoodPopup) { setShowMoodPopup(false); return; }
       if (showNewBoard) { setShowNewBoard(false); return; }
@@ -1105,13 +1127,9 @@ export default function MallangApp() {
         return;
       }
 
-      // 메인 화면 + 홈 탭이면 종료 시도 (PWA 최소화)
+      // 메인 화면 + 홈 탭이면 종료 확인 팝업
       if (screen === "main" && tab === "home") {
-        if (window.navigator.app && window.navigator.app.exitApp) {
-          window.navigator.app.exitApp();
-        } else {
-          window.close();
-        }
+        setShowExitConfirm(true);
         return;
       }
 
@@ -1123,7 +1141,7 @@ export default function MallangApp() {
 
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
-  }, [screen, tab, showSettings, showMoodPopup, showNewBoard, showCouponCreate, showAddTodo, showConflictInput, showConversationHistory]);
+  }, [screen, tab, showExitConfirm, showSettings, showMoodPopup, showNewBoard, showCouponCreate, showAddTodo, showConflictInput, showConversationHistory]);
 
   // Ad watching simulation timer
   useEffect(() => {
@@ -1296,7 +1314,7 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
           * { margin: 0; padding: 0; box-sizing: border-box; color-scheme: only light; }
           @keyframes spin { to { transform: rotate(360deg); } }
         `}</style>
-        <div style={{ fontSize: 48, marginBottom: 16 }}>🍇</div>
+        <img src="/splash-logo.png" alt="말랑" width={48} height={48} style={{ marginBottom: 16 }} />
         <div style={{
           width: 32, height: 32, border: `3px solid ${colors.primaryLight}`,
           borderTopColor: colors.primary, borderRadius: "50%",
@@ -1326,10 +1344,10 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
           display: "flex", flexDirection: "column", alignItems: "center",
           textAlign: "center", marginTop: "-60px",
         }}>
-          <div style={{
-            fontSize: 72, marginBottom: 12,
+          <img src="/splash-logo.png" alt="말랑" width={80} height={80} style={{
+            marginBottom: 12,
             animation: "splashFadeIn 0.8s ease-out, splashFloat 3s ease-in-out 1s infinite",
-          }}>🍇</div>
+          }} />
           <h1 style={{
             fontSize: 32, fontWeight: 800, color: colors.primary, marginBottom: 8,
             animation: "splashFadeIn 0.8s ease-out 0.3s both",
@@ -3559,7 +3577,7 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
           const totalBoards = grapeBoards.length;
           const sentCoupons = myCoupons.filter(c => c.from === user.name).length;
           const receivedCoupons = myCoupons.filter(c => c.to === user.name && c.status !== "draft").length;
-          const totalGrapes = user.grapePoints;
+          const totalGrapes = grapeBoards.reduce((sum, b) => sum + (b.current || 0), 0);
           const choreCompletionRate = totalChores > 0 ? Math.round((totalChoresCompleted / totalChores) * 100) : 0;
           const boardCompletionRate = totalBoards > 0 ? Math.round((completedBoards / totalBoards) * 100) : 0;
           const relationScore = Math.min(100, Math.round((totalPraise * 5 + totalChoresCompleted * 3 + completedBoards * 10 + sentCoupons * 4 + receivedCoupons * 4) / Math.max(1, (totalPraise + totalChores + totalBoards + sentCoupons + receivedCoupons)) * 20));
@@ -3608,7 +3626,7 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
                 <div style={{ fontSize: 11, color: colors.textTertiary }}>보유 포도알</div>
               </div>
               <div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: colors.rose }}>{hearts}</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: colors.grape }}>{hearts}</div>
                 <div style={{ fontSize: 11, color: colors.textTertiary }}>보유 하트</div>
               </div>
               <div>
@@ -5968,7 +5986,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
             background: "#fff", borderRadius: 20, padding: "28px 24px",
             width: "82%", maxWidth: 300, textAlign: "center",
           }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>🍇</div>
+            <img src="/splash-logo.png" alt="말랑" width={40} height={40} style={{ marginBottom: 12 }} />
             <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
               앱을 종료할까요?
             </h3>

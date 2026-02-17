@@ -11,13 +11,19 @@ export const createPair = async (myUid, inviteCode) => {
   if (!db) return { error: 'Firebase 미초기화' };
 
   try {
+    // 초대 코드 정규화
+    let normalizedCode = inviteCode.trim().toUpperCase();
+    if (!normalizedCode.startsWith('MALL-')) {
+      normalizedCode = 'MALL-' + normalizedCode;
+    }
+
     const result = await runTransaction(db, async (transaction) => {
       // 1. 초대 코드 검증
-      const codeRef = doc(db, 'inviteCodes', inviteCode.toUpperCase());
+      const codeRef = doc(db, 'inviteCodes', normalizedCode);
       const codeSnap = await transaction.get(codeRef);
 
       if (!codeSnap.exists()) {
-        throw new Error('유효하지 않은 초대 코드입니다');
+        throw new Error('초대 코드를 찾을 수 없어요. 코드를 다시 확인해주세요');
       }
 
       const codeData = codeSnap.data();
