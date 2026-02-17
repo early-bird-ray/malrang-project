@@ -14,7 +14,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { text, likedWords, dislikedWords } = req.body;
+    const { text, likedWords, dislikedWords, partnerPersonality } = req.body;
 
     if (!text || !text.trim()) {
       return res.status(400).json({ error: '변환할 텍스트가 필요합니다' });
@@ -28,6 +28,7 @@ export default async function handler(req, res) {
 4. 따뜻하고 다정한 어조 유지
 ${likedWords ? `\n사용자의 짝꿍이 좋아하는 표현: ${likedWords}` : ''}
 ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
+${partnerPersonality ? `\n상대방(짝꿍)의 성향 분석 결과: ${partnerPersonality}\n이 성향을 고려하여 상대가 가장 잘 받아들일 수 있는 표현으로 변환해주세요.` : ''}
 
 반드시 다음 JSON 형식으로만 응답하세요:
 {"transformed": "변환된 문장", "tip": "짧은 대화 팁 (20자 이내)", "style": "스타일 이름 (예: 차분한 공감형)"}`;

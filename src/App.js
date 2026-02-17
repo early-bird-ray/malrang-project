@@ -12,7 +12,7 @@ import { earnGrapes, spendGrapes, createGrapeBoard, updateGrapeBoard, updateGrap
 import { saveAiTransformEntry, updateUserData, generateUniqueInviteCode, registerInviteCode, saveMoodEntry } from "./services/userService";
 import { createCoupon, sendCoupon, useCoupon as markCouponUsed, undoUseCoupon, updateCoupon, deleteCoupon, createShopListing, deleteShopListing } from "./services/couponService";
 import { createPair } from "./services/pairService";
-import { subscribeToUser, subscribeToMoodHistory } from "./services/listenerService";
+import { subscribeToUser, subscribeToMoodHistory, subscribeToAiTransformHistory } from "./services/listenerService";
 import { setupCoupleListeners, teardownCoupleListeners } from "./services/listenerService";
 
 
@@ -976,6 +976,33 @@ export default function MallangApp() {
     return () => unsubscribe();
   }, [authUser]);
 
+  // AI 변환 기록 실시간 구독
+  useEffect(() => {
+    if (!authUser) return;
+    const unsubscribe = subscribeToAiTransformHistory(authUser.uid, (entries) => {
+      if (entries && entries.length > 0) {
+        setConversationHistory(entries);
+      }
+    });
+    return () => unsubscribe();
+  }, [authUser]);
+
+  // 짝꿍 성향 데이터 구독
+  useEffect(() => {
+    if (!user.partnerUid) return;
+    const unsubscribe = subscribeToUser(user.partnerUid, (data) => {
+      if (data) {
+        setUser(u => ({
+          ...u,
+          partnerSurvey: data.survey && Object.keys(data.survey).length > 0 ? data.survey : null,
+          partnerSurveyCompleted: !!data.surveyCompleted,
+        }));
+      }
+    });
+    return () => unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.partnerUid]);
+
   // 커플 데이터 실시간 구독 (커플 ID 있을 때)
   useEffect(() => {
     const coupleId = user.coupleId;
@@ -1057,6 +1084,17 @@ export default function MallangApp() {
     setMoodHistory([]);
     setConversationHistory([]);
     setSavedSurveyAnswers({});
+    // UI 상태 초기화
+    setShowSettings(false);
+    setSettingsTab("main");
+    setShowConflictInput(false);
+    setShowMoodPopup(false);
+    setShowNewBoard(false);
+    setShowCouponCreate(false);
+    setTab("home");
+    moodPopupShownRef.current = false;
+    localStorage.removeItem("mallang_tab");
+    localStorage.removeItem("mallang_reportSubTab");
     setScreen("splash");
   };
 
@@ -1076,13 +1114,27 @@ export default function MallangApp() {
     }
   }, [screen, user.name, authLoading]);
 
-  // 하루 한 번 기분 팝업 (메인 화면 진입 시, 세션당 1회)
+  // 하루 한 번 기분 팝업 (메인 화면 진입 시)
+  // localStorage에 오늘 날짜 기분 선택 여부 저장하여 새로고침/재로그인에도 유지
   useEffect(() => {
     if (screen === "main" && !moodPopupShownRef.current) {
       const timer = setTimeout(() => {
         const today = new Date().toISOString().split('T')[0];
+        // 1. localStorage에서 빠르게 체크 (Firestore 로딩 전에도 동작)
+        const savedMoodDate = localStorage.getItem("mallang_lastMoodDate");
+        if (savedMoodDate === today) {
+          moodPopupShownRef.current = true;
+          return;
+        }
+        // 2. moodHistory(Firestore/로컬) 체크
         const todayMood = moodHistory.find(m => m.date === today);
-        if (!todayMood) setShowMoodPopup(true);
+        if (todayMood) {
+          localStorage.setItem("mallang_lastMoodDate", today);
+          moodPopupShownRef.current = true;
+          return;
+        }
+        // 3. 오늘 기분 없으면 팝업
+        setShowMoodPopup(true);
         moodPopupShownRef.current = true;
       }, 1500);
       return () => clearTimeout(timer);
@@ -1223,6 +1275,10 @@ export default function MallangApp() {
   const handleConflictSubmit = async () => {
     if (!conflictText.trim()) return;
 
+    // 짝꿍 성향 정보 구성
+    const partnerPersonality = user.partnerSurvey ? Object.entries(user.partnerSurvey)
+      .map(([key, val]) => `${key}: ${val}`).join(', ') : null;
+
     try {
       let result;
       // 서버 API 먼저 시도, 실패 시 직접 호출
@@ -1233,7 +1289,7 @@ export default function MallangApp() {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${authUser ? await authUser.getIdToken() : ''}`,
           },
-          body: JSON.stringify({ text: conflictText, likedWords, dislikedWords }),
+          body: JSON.stringify({ text: conflictText, likedWords, dislikedWords, partnerPersonality }),
         });
         if (!response.ok) throw new Error('서버 API 실패');
         result = await response.json();
@@ -1247,6 +1303,7 @@ export default function MallangApp() {
 4. 따뜻하고 다정한 어조 유지
 ${likedWords ? `\n사용자의 짝꿍이 좋아하는 표현: ${likedWords}` : ''}
 ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
+${partnerPersonality ? `\n상대방(짝꿍)의 성향 분석 결과: ${partnerPersonality}\n이 성향을 고려하여 상대가 가장 잘 받아들일 수 있는 표현으로 변환해주세요.` : ''}
 
 반드시 다음 JSON 형식으로만 응답하세요:
 {"transformed": "변환된 문장", "tip": "짧은 대화 팁 (20자 이내)", "style": "스타일 이름 (예: 차분한 공감형)"}`;
@@ -2048,6 +2105,28 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
               💡 지금 하려는말 대신 짝꿍님이 좋아하는 스타일로 바꿔드릴게요.
             </div>
 
+            {/* 짝꿍 성향 분석 안내 */}
+            {user.partnerConnected && !user.partnerSurveyCompleted && (
+              <div style={{
+                background: "#FFF7ED", borderRadius: 10, padding: "10px 14px",
+                fontSize: 12, color: "#C2410C", marginBottom: 12, lineHeight: 1.5,
+              }}>
+                짝꿍이 아직 성향 분석을 진행하지 않았어요. 일반적인 문구로 제안해드릴게요.
+              </div>
+            )}
+
+            {/* 변환 기록 보기 버튼 (AI 요청 전에도 표시) */}
+            {!aiSuggestion && conversationHistory.length > 0 && (
+              <button onClick={() => setShowConversationHistory(true)} style={{
+                width: "100%", marginBottom: 12, padding: "12px", borderRadius: 12,
+                background: "#F3F4F6", border: "none",
+                fontSize: 13, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              }}>
+                📋 변환 기록 보기 ({conversationHistory.length}개)
+              </button>
+            )}
+
             {!aiSuggestion ? (
               <>
                 <textarea
@@ -2115,13 +2194,25 @@ ${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords
                   }}>
                     <Copy size={14} /> 복사하기
                   </button>
-                  <button onClick={() => showToast("카카오톡으로 공유 준비 중!")} style={{
+                  <button onClick={async () => {
+                    const shareText = aiSuggestion.transformed.replace(/"/g, "");
+                    if (navigator.share) {
+                      try {
+                        await navigator.share({ text: shareText });
+                      } catch (e) {
+                        if (e.name !== 'AbortError') showToast("공유에 실패했어요");
+                      }
+                    } else {
+                      navigator.clipboard?.writeText?.(shareText);
+                      showToast("클립보드에 복사되었어요! 원하는 앱에서 붙여넣기 해주세요");
+                    }
+                  }} style={{
                     flex: 1, padding: "12px", borderRadius: 12,
                     background: "#FEE500", color: "#3C1E1E", border: "none",
                     fontSize: 13, fontWeight: 600, cursor: "pointer",
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
                   }}>
-                    <Share2 size={14} /> 카톡 공유
+                    <Share2 size={14} /> 공유하기
                   </button>
                 </div>
 
@@ -5905,6 +5996,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
                     timestamp: new Date().toISOString(),
                   };
                   setMoodHistory(prev => [...prev.filter(m => m.date !== today), moodEntry]);
+                  localStorage.setItem("mallang_lastMoodDate", today);
                   moodPopupShownRef.current = true;
                   setShowMoodPopup(false);
                   showToast(`오늘 기분: ${mood.emoji} ${mood.label}`);
