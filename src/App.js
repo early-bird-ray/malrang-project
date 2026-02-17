@@ -1278,6 +1278,7 @@ export default function MallangApp() {
     // 짝꿍 성향 정보 구성
     const partnerPersonality = user.partnerSurvey ? Object.entries(user.partnerSurvey)
       .map(([key, val]) => `${key}: ${val}`).join(', ') : null;
+    const hasPersonality = !!partnerPersonality;
 
     try {
       let result;
@@ -1294,28 +1295,45 @@ export default function MallangApp() {
         if (!response.ok) throw new Error('서버 API 실패');
         result = await response.json();
       } catch {
-        // 직접 Gemini 호출
-        const systemPrompt = `당신은 커플 대화 전문가입니다. 사용자가 하고 싶은 말을 짝꿍이 좋아하는 스타일로 부드럽게 변환해주세요.
-변환 시 다음 원칙을 따르세요:
-1. 감정을 먼저 인정하고 공감하는 표현 사용
-2. "나는 ~해서 ~했어" 같은 I-message 형태로
-3. 상대방을 비난하지 않고 해결책 제안
-4. 따뜻하고 다정한 어조 유지
-${likedWords ? `\n사용자의 짝꿍이 좋아하는 표현: ${likedWords}` : ''}
-${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
-${partnerPersonality ? `\n상대방(짝꿍)의 성향 분석 결과: ${partnerPersonality}\n이 성향을 고려하여 상대가 가장 잘 받아들일 수 있는 표현으로 변환해주세요.` : ''}
+        // 직접 Gemini 호출 (서버와 동일한 IF/ELSE 로직)
+        const systemPrompt = `너는 사용자의 메시지를 변환해주는 '대화 도우미'야. 아래 로직을 엄격히 지켜서 대답해줘.
 
-반드시 다음 JSON 형식으로만 응답하세요:
-{"transformed": "변환된 문장", "tip": "짧은 대화 팁 (20자 이내)", "style": "스타일 이름 (예: 차분한 공감형)"}`;
+1) 데이터 확인: 상대방 성향 분석 결과가 ${hasPersonality ? '있음' : '없음'}.
+
+2) 실행 로직:
+${hasPersonality ? `[상태 A - 성향 맞춤 모드]
+상대방의 성향 분석 결과: ${partnerPersonality}
+- 분석된 성향(MBTI, 성격, 선호 말투)을 최우선으로 반영해.
+- 상대방이 가장 거부감 느끼지 않고 좋아할 만한 말투로 문장을 다듬어줘.
+- 감정을 먼저 인정하고 공감하는 표현 사용
+- "나는 ~해서 ~했어" 같은 I-message 형태로
+- 상대방을 비난하지 않고 해결책 제안
+${likedWords ? `사용자의 짝꿍이 좋아하는 표현: ${likedWords}` : ''}
+${dislikedWords ? `사용자의 짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
+
+반드시 다음 JSON 형식으로만 응답:
+{"mode":"성향 맞춤 모드","transformed":"변환된 문장 1개","tip":"짧은 대화 팁 (20자 이내)","style":"스타일 이름"}` : `[상태 B - 일반 제안 모드]
+상대방 성향 정보가 없으므로 보편적이고 친절한 '일반 모드'로 작동해.
+- 감정을 먼저 인정하고 공감하는 표현 사용
+- "나는 ~해서 ~했어" 같은 I-message 형태로
+- 상대방을 비난하지 않고 해결책 제안
+- 각각 다른 스타일(예: 공감형, 유머형, 솔직담백형)의 3가지 선택지를 줘.
+${likedWords ? `사용자의 짝꿍이 좋아하는 표현: ${likedWords}` : ''}
+${dislikedWords ? `사용자의 짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
+
+반드시 다음 JSON 형식으로만 응답:
+{"mode":"일반 제안 모드","options":[{"transformed":"변환된 문장1","style":"스타일1"},{"transformed":"변환된 문장2","style":"스타일2"},{"transformed":"변환된 문장3","style":"스타일3"}],"tip":"짧은 대화 팁 (20자 이내)"}`}`;
         result = await callGemini(systemPrompt, conflictText);
       }
 
       const suggestion = {
         id: Date.now(),
         original: conflictText,
-        transformed: result.transformed,
+        mode: result.mode || (hasPersonality ? "성향 맞춤 모드" : "일반 제안 모드"),
+        transformed: result.transformed || null,
+        options: result.options || null,
         tip: result.tip,
-        partnerStyle: result.style || "차분한 공감형",
+        partnerStyle: result.style || (result.options?.[0]?.style) || "차분한 공감형",
         timestamp: new Date().toISOString(),
         feedback: null,
       };
@@ -1330,7 +1348,9 @@ ${partnerPersonality ? `\n상대방(짝꿍)의 성향 분석 결과: ${partnerPe
       const suggestion = {
         id: Date.now(),
         original: conflictText,
+        mode: "일반 제안 모드",
         transformed: getAiTransformedMessage(conflictText),
+        options: null,
         tip: "감정을 먼저 인정해주면 대화가 잘 풀려요",
         partnerStyle: "차분한 공감형",
         timestamp: new Date().toISOString(),
@@ -2105,28 +2125,6 @@ ${partnerPersonality ? `\n상대방(짝꿍)의 성향 분석 결과: ${partnerPe
               💡 지금 하려는말 대신 짝꿍님이 좋아하는 스타일로 바꿔드릴게요.
             </div>
 
-            {/* 짝꿍 성향 분석 안내 */}
-            {user.partnerConnected && !user.partnerSurveyCompleted && (
-              <div style={{
-                background: "#FFF7ED", borderRadius: 10, padding: "10px 14px",
-                fontSize: 12, color: "#C2410C", marginBottom: 12, lineHeight: 1.5,
-              }}>
-                짝꿍이 아직 성향 분석을 진행하지 않았어요. 일반적인 문구로 제안해드릴게요.
-              </div>
-            )}
-
-            {/* 변환 기록 보기 버튼 (AI 요청 전에도 표시) */}
-            {!aiSuggestion && conversationHistory.length > 0 && (
-              <button onClick={() => setShowConversationHistory(true)} style={{
-                width: "100%", marginBottom: 12, padding: "12px", borderRadius: 12,
-                background: "#F3F4F6", border: "none",
-                fontSize: 13, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-              }}>
-                📋 변환 기록 보기 ({conversationHistory.length}개)
-              </button>
-            )}
-
             {!aiSuggestion ? (
               <>
                 <textarea
@@ -2151,9 +2149,41 @@ ${partnerPersonality ? `\n상대방(짝꿍)의 성향 분석 결과: ${partnerPe
                 }}>
                   <Sparkles size={16} /> AI 말투 변환하기
                 </button>
+
+                {/* 변환 기록 보기 버튼 (AI 말투 변환하기 하단) */}
+                {conversationHistory.length > 0 && (
+                  <button onClick={() => setShowConversationHistory(true)} style={{
+                    width: "100%", marginTop: 10, padding: "12px", borderRadius: 12,
+                    background: "#F3F4F6", border: "none",
+                    fontSize: 13, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                  }}>
+                    📋 변환 기록 보기 ({conversationHistory.length}개)
+                  </button>
+                )}
               </>
             ) : (
               <div>
+                {/* 모드 배지 */}
+                <div style={{
+                  display: "inline-block", padding: "4px 10px", borderRadius: 8, marginBottom: 12,
+                  background: aiSuggestion.mode === "성향 맞춤 모드" ? colors.primaryLight : "#FFF7ED",
+                  fontSize: 11, fontWeight: 600,
+                  color: aiSuggestion.mode === "성향 맞춤 모드" ? colors.primary : "#C2410C",
+                }}>
+                  {aiSuggestion.mode === "성향 맞춤 모드" ? "🎯 성향 맞춤 모드" : "💡 일반 제안 모드"}
+                </div>
+
+                {/* 일반 제안 모드 안내 */}
+                {aiSuggestion.mode === "일반 제안 모드" && (
+                  <div style={{
+                    background: "#FFF7ED", borderRadius: 10, padding: "10px 14px",
+                    fontSize: 12, color: "#C2410C", marginBottom: 12, lineHeight: 1.5,
+                  }}>
+                    상대방 성향 정보가 없어서 일반적인 문구로 제안해 드릴게요!
+                  </div>
+                )}
+
                 <div style={{
                   background: "#F9FAFB", borderRadius: 12, padding: "14px",
                   marginBottom: 12, borderLeft: `3px solid ${colors.textTertiary}`,
@@ -2162,18 +2192,54 @@ ${partnerPersonality ? `\n상대방(짝꿍)의 성향 분석 결과: ${partnerPe
                   <p style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.5 }}>{aiSuggestion.original}</p>
                 </div>
 
-                <div style={{
-                  background: colors.primaryLight, borderRadius: 14, padding: "16px",
-                  marginBottom: 12, borderLeft: `3px solid ${colors.primary}`,
-                }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                    <Sparkles size={14} color={colors.primary} />
-                    <p style={{ fontSize: 11, color: colors.primary, fontWeight: 600 }}>✨ {aiSuggestion.partnerStyle} 스타일로 변환</p>
+                {/* State A: 성향 맞춤 모드 - 단일 변환 결과 */}
+                {aiSuggestion.transformed && !aiSuggestion.options && (
+                  <div style={{
+                    background: colors.primaryLight, borderRadius: 14, padding: "16px",
+                    marginBottom: 12, borderLeft: `3px solid ${colors.primary}`,
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                      <Sparkles size={14} color={colors.primary} />
+                      <p style={{ fontSize: 11, color: colors.primary, fontWeight: 600 }}>✨ {aiSuggestion.partnerStyle} 스타일로 변환</p>
+                    </div>
+                    <p style={{ fontSize: 14, color: colors.text, lineHeight: 1.7, fontWeight: 500 }}>
+                      {aiSuggestion.transformed}
+                    </p>
                   </div>
-                  <p style={{ fontSize: 14, color: colors.text, lineHeight: 1.7, fontWeight: 500 }}>
-                    {aiSuggestion.transformed}
-                  </p>
-                </div>
+                )}
+
+                {/* State B: 일반 제안 모드 - 3가지 선택지 */}
+                {aiSuggestion.options && aiSuggestion.options.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 12 }}>
+                    <p style={{ fontSize: 12, color: colors.textSecondary, fontWeight: 600, marginBottom: 2 }}>
+                      마음에 드는 표현을 선택해보세요
+                    </p>
+                    {aiSuggestion.options.map((opt, idx) => (
+                      <button key={idx} onClick={() => {
+                        setAiSuggestion(prev => ({ ...prev, transformed: opt.transformed, partnerStyle: opt.style, options: null, selectedFromOptions: true }));
+                      }} style={{
+                        background: "#fff", borderRadius: 14, padding: "14px",
+                        border: `1.5px solid ${colors.border}`, textAlign: "left", cursor: "pointer",
+                        transition: "all 0.2s",
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                          <span style={{
+                            display: "inline-block", width: 22, height: 22, borderRadius: "50%",
+                            background: [colors.primaryLight, colors.mintLight, colors.goldLight][idx],
+                            color: [colors.primary, colors.mint, colors.gold][idx],
+                            fontSize: 11, fontWeight: 700, textAlign: "center", lineHeight: "22px",
+                          }}>{idx + 1}</span>
+                          <span style={{ fontSize: 11, fontWeight: 600, color: colors.textSecondary }}>
+                            {opt.style}
+                          </span>
+                        </div>
+                        <p style={{ fontSize: 13, color: colors.text, lineHeight: 1.6, margin: 0 }}>
+                          {opt.transformed}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 <div style={{
                   background: colors.mintLight, borderRadius: 10, padding: "10px 14px",
@@ -2182,74 +2248,82 @@ ${partnerPersonality ? `\n상대방(짝꿍)의 성향 분석 결과: ${partnerPe
                   🌱 {aiSuggestion.tip}
                 </div>
 
-                <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-                  <button onClick={() => {
-                    navigator.clipboard?.writeText?.(aiSuggestion.transformed.replace(/"/g, ""));
-                    showToast("문장이 복사되었어요! 📋");
-                  }} style={{
-                    flex: 1, padding: "12px", borderRadius: 12,
-                    background: colors.primary, color: "#fff", border: "none",
-                    fontSize: 13, fontWeight: 600, cursor: "pointer",
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                  }}>
-                    <Copy size={14} /> 복사하기
-                  </button>
-                  <button onClick={async () => {
-                    const shareText = aiSuggestion.transformed.replace(/"/g, "");
-                    if (navigator.share) {
-                      try {
-                        await navigator.share({ text: shareText });
-                      } catch (e) {
-                        if (e.name !== 'AbortError') showToast("공유에 실패했어요");
+                {/* 복사/공유 버튼 (단일 결과가 선택된 상태에서만) */}
+                {aiSuggestion.transformed && !aiSuggestion.options && (
+                  <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                    <button onClick={() => {
+                      navigator.clipboard?.writeText?.(aiSuggestion.transformed.replace(/"/g, ""));
+                      showToast("문장이 복사되었어요! 📋");
+                    }} style={{
+                      flex: 1, padding: "12px", borderRadius: 12,
+                      background: colors.primary, color: "#fff", border: "none",
+                      fontSize: 13, fontWeight: 600, cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    }}>
+                      <Copy size={14} /> 복사하기
+                    </button>
+                    <button onClick={async () => {
+                      const shareText = aiSuggestion.transformed.replace(/"/g, "");
+                      if (navigator.share) {
+                        try {
+                          await navigator.share({ text: shareText });
+                        } catch (e) {
+                          if (e.name !== 'AbortError') showToast("공유에 실패했어요");
+                        }
+                      } else {
+                        navigator.clipboard?.writeText?.(shareText);
+                        showToast("클립보드에 복사되었어요! 원하는 앱에서 붙여넣기 해주세요");
                       }
-                    } else {
-                      navigator.clipboard?.writeText?.(shareText);
-                      showToast("클립보드에 복사되었어요! 원하는 앱에서 붙여넣기 해주세요");
-                    }
-                  }} style={{
-                    flex: 1, padding: "12px", borderRadius: 12,
-                    background: "#FEE500", color: "#3C1E1E", border: "none",
-                    fontSize: 13, fontWeight: 600, cursor: "pointer",
-                    display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                  }}>
-                    <Share2 size={14} /> 공유하기
-                  </button>
-                </div>
+                    }} style={{
+                      flex: 1, padding: "12px", borderRadius: 12,
+                      background: "#FEE500", color: "#3C1E1E", border: "none",
+                      fontSize: 13, fontWeight: 600, cursor: "pointer",
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                    }}>
+                      <Share2 size={14} /> 공유하기
+                    </button>
+                  </div>
+                )}
 
-                {!feedbackGiven ? (
-                  <div>
-                    <p style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8, textAlign: "center" }}>
-                      이 표현으로 대화해본 결과는요? (나중에도 입력 가능)
-                    </p>
-                    <div style={{ display: "flex", gap: 8 }}>
-                      {[
-                        { label: "성공 😊", value: "success", bg: colors.mintLight, color: colors.mint },
-                        { label: "보통 😐", value: "normal", bg: colors.goldLight, color: colors.gold },
-                        { label: "아쉬움 😢", value: "fail", bg: colors.roseLight, color: colors.rose },
-                      ].map(fb => (
-                        <button key={fb.value} onClick={() => {
-                          setFeedbackGiven(fb.value);
-                          if (aiSuggestion?.id) {
-                            updateConversationFeedback(aiSuggestion.id, fb.value);
-                          }
-                          showToast(fb.value === "success" ? "대화 성공! 좋은 소통이었어요 😊" : "피드백 감사해요! 더 나은 제안을 할게요");
-                        }} style={{
-                          flex: 1, padding: "10px 6px", borderRadius: 10,
-                          background: fb.bg, color: fb.color, border: "none",
-                          fontSize: 12, fontWeight: 600, cursor: "pointer",
-                        }}>
-                          {fb.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{
-                    textAlign: "center", padding: "14px", background: "#F0FDF4",
-                    borderRadius: 12, fontSize: 13, color: colors.mint,
-                  }}>
-                    ✅ 피드백이 저장되었어요. 더 좋은 조언을 위해 활용할게요!
-                  </div>
+                {/* 피드백 (단일 결과가 선택된 상태에서만) */}
+                {aiSuggestion.transformed && !aiSuggestion.options && (
+                  <>
+                    {!feedbackGiven ? (
+                      <div>
+                        <p style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8, textAlign: "center" }}>
+                          이 표현으로 대화해본 결과는요? (나중에도 입력 가능)
+                        </p>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          {[
+                            { label: "성공 😊", value: "success", bg: colors.mintLight, color: colors.mint },
+                            { label: "보통 😐", value: "normal", bg: colors.goldLight, color: colors.gold },
+                            { label: "아쉬움 😢", value: "fail", bg: colors.roseLight, color: colors.rose },
+                          ].map(fb => (
+                            <button key={fb.value} onClick={() => {
+                              setFeedbackGiven(fb.value);
+                              if (aiSuggestion?.id) {
+                                updateConversationFeedback(aiSuggestion.id, fb.value);
+                              }
+                              showToast(fb.value === "success" ? "대화 성공! 좋은 소통이었어요 😊" : "피드백 감사해요! 더 나은 제안을 할게요");
+                            }} style={{
+                              flex: 1, padding: "10px 6px", borderRadius: 10,
+                              background: fb.bg, color: fb.color, border: "none",
+                              fontSize: 12, fontWeight: 600, cursor: "pointer",
+                            }}>
+                              {fb.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{
+                        textAlign: "center", padding: "14px", background: "#F0FDF4",
+                        borderRadius: 12, fontSize: 13, color: colors.mint,
+                      }}>
+                        ✅ 피드백이 저장되었어요. 더 좋은 조언을 위해 활용할게요!
+                      </div>
+                    )}
+                  </>
                 )}
 
                 {/* 대화 기록 보기 버튼 */}

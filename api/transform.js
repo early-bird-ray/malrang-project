@@ -20,18 +20,35 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: '변환할 텍스트가 필요합니다' });
     }
 
-    const systemPrompt = `당신은 커플 대화 전문가입니다. 사용자가 하고 싶은 말을 짝꿍이 좋아하는 스타일로 부드럽게 변환해주세요.
-변환 시 다음 원칙을 따르세요:
-1. 감정을 먼저 인정하고 공감하는 표현 사용
-2. "나는 ~해서 ~했어" 같은 I-message 형태로
-3. 상대방을 비난하지 않고 해결책 제안
-4. 따뜻하고 다정한 어조 유지
-${likedWords ? `\n사용자의 짝꿍이 좋아하는 표현: ${likedWords}` : ''}
-${dislikedWords ? `\n사용자의 짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
-${partnerPersonality ? `\n상대방(짝꿍)의 성향 분석 결과: ${partnerPersonality}\n이 성향을 고려하여 상대가 가장 잘 받아들일 수 있는 표현으로 변환해주세요.` : ''}
+    const hasPersonality = !!partnerPersonality;
 
-반드시 다음 JSON 형식으로만 응답하세요:
-{"transformed": "변환된 문장", "tip": "짧은 대화 팁 (20자 이내)", "style": "스타일 이름 (예: 차분한 공감형)"}`;
+    const systemPrompt = `너는 사용자의 메시지를 변환해주는 '대화 도우미'야. 아래 로직을 엄격히 지켜서 대답해줘.
+
+1) 데이터 확인: 상대방 성향 분석 결과가 ${hasPersonality ? '있음' : '없음'}.
+
+2) 실행 로직:
+${hasPersonality ? `[상태 A - 성향 맞춤 모드]
+상대방의 성향 분석 결과: ${partnerPersonality}
+- 분석된 성향(MBTI, 성격, 선호 말투)을 최우선으로 반영해.
+- 상대방이 가장 거부감 느끼지 않고 좋아할 만한 말투로 문장을 다듬어줘.
+- 감정을 먼저 인정하고 공감하는 표현 사용
+- "나는 ~해서 ~했어" 같은 I-message 형태로
+- 상대방을 비난하지 않고 해결책 제안
+${likedWords ? `사용자의 짝꿍이 좋아하는 표현: ${likedWords}` : ''}
+${dislikedWords ? `사용자의 짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
+
+반드시 다음 JSON 형식으로만 응답:
+{"mode":"성향 맞춤 모드","transformed":"변환된 문장 1개","tip":"짧은 대화 팁 (20자 이내)","style":"스타일 이름"}` : `[상태 B - 일반 제안 모드]
+상대방 성향 정보가 없으므로 보편적이고 친절한 '일반 모드'로 작동해.
+- 감정을 먼저 인정하고 공감하는 표현 사용
+- "나는 ~해서 ~했어" 같은 I-message 형태로
+- 상대방을 비난하지 않고 해결책 제안
+- 각각 다른 스타일(예: 공감형, 유머형, 솔직담백형)의 3가지 선택지를 줘.
+${likedWords ? `사용자의 짝꿍이 좋아하는 표현: ${likedWords}` : ''}
+${dislikedWords ? `사용자의 짝꿍이 싫어하는 표현: ${dislikedWords}` : ''}
+
+반드시 다음 JSON 형식으로만 응답:
+{"mode":"일반 제안 모드","options":[{"transformed":"변환된 문장1","style":"스타일1"},{"transformed":"변환된 문장2","style":"스타일2"},{"transformed":"변환된 문장3","style":"스타일3"}],"tip":"짧은 대화 팁 (20자 이내)"}`}`;
 
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.0-flash',
