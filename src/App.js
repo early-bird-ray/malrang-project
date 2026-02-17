@@ -1378,9 +1378,14 @@ JSON 형식:
           },
           body: JSON.stringify({ text: conflictText, likedWords, dislikedWords, partnerPersonality }),
         });
-        if (!response.ok) throw new Error('서버 API 실패');
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          console.error('Server transform error:', errData);
+          throw new Error(errData.message || errData.error || `서버 에러 ${response.status}`);
+        }
         result = await response.json();
-      } catch {
+      } catch (serverErr) {
+        console.error('Server API failed, trying client fallback:', serverErr.message);
         // 직접 Gemini 호출 (서버와 동일한 프롬프트)
         result = await callGemini(buildTransformPrompt(), conflictText);
       }
@@ -1404,7 +1409,7 @@ JSON 형식:
       setConversationHistory(prev => [suggestion, ...prev]);
     } catch (error) {
       console.error('Transform API error:', error);
-      showToast("AI 변환에 실패했어요. 다시 시도해주세요.", "error");
+      showToast("AI 변환 실패: " + (error.message || "알 수 없는 오류"), "error");
     }
   };
 
@@ -3138,7 +3143,8 @@ JSON 형식:
                 if (editBoard) {
                   if (coupleId) {
                     const { error } = await updateGrapeBoard(coupleId, editBoard.id, { title: newBoard.title, goal: newBoard.goal, perSuccess: newBoard.perSuccess, owner: newBoard.owner });
-                    if (error) { showToast(error, "error"); return; }
+                    if (error) { showToast("포도판 수정 실패: " + error, "error"); return; }
+                    setGrapeBoards(prev => prev.map(b => b.id === editBoard.id ? { ...b, title: newBoard.title, goal: newBoard.goal, perSuccess: newBoard.perSuccess, owner: newBoard.owner } : b));
                   } else {
                     setGrapeBoards(prev => prev.map(b =>
                       b.id === editBoard.id
@@ -3149,8 +3155,10 @@ JSON 형식:
                   showToast("포도판이 수정되었어요! ✏️");
                 } else {
                   if (coupleId) {
-                    const { error } = await createGrapeBoard(coupleId, { title: newBoard.title, goal: newBoard.goal, perSuccess: newBoard.perSuccess, owner: newBoard.owner });
-                    if (error) { showToast(error, "error"); return; }
+                    const { id, error } = await createGrapeBoard(coupleId, { title: newBoard.title, goal: newBoard.goal, perSuccess: newBoard.perSuccess, owner: newBoard.owner });
+                    if (error) { showToast("포도판 생성 실패: " + error, "error"); return; }
+                    // Firestore 리스너 대기 없이 즉시 로컬 반영
+                    setGrapeBoards(prev => [...prev, { id: id || Date.now(), title: newBoard.title, goal: newBoard.goal, perSuccess: newBoard.perSuccess, owner: newBoard.owner, current: 0, progress: 0 }]);
                   } else {
                     setGrapeBoards(prev => [...prev, { ...newBoard, id: Date.now(), current: 0 }]);
                   }
