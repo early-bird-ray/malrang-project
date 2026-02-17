@@ -1009,6 +1009,7 @@ export default function MallangApp() {
     });
 
     return () => teardownCoupleListeners(coupleId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authUser, user.coupleId]);
 
   // 개인 기분/AI변환 기록은 CoupleContext에서 구독 중 (중복 방지)
