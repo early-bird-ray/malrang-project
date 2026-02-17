@@ -80,14 +80,25 @@ JSON 형식:
       },
     });
 
-    const result = await model.generateContent(text);
+    // 429 재시도 (최대 2회, 3초 간격)
+    let result;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        result = await model.generateContent(text);
+        break;
+      } catch (e) {
+        if (e.status === 429 || (e.message && e.message.includes('429'))) {
+          if (attempt < 2) { await new Promise(r => setTimeout(r, (attempt + 1) * 3000)); continue; }
+        }
+        throw e;
+      }
+    }
     const responseText = result.response.text();
 
     let parsed;
     try {
       parsed = JSON.parse(responseText);
     } catch {
-      // JSON이 코드블록으로 감싸진 경우 처리
       const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (jsonMatch) {
         parsed = JSON.parse(jsonMatch[1].trim());
@@ -100,8 +111,9 @@ JSON 형식:
     return res.status(200).json(parsed);
   } catch (error) {
     console.error('Transform API error:', error.message);
-    return res.status(500).json({
-      error: 'AI 변환에 실패했습니다',
+    const status = (error.status === 429 || (error.message && error.message.includes('429'))) ? 429 : 500;
+    return res.status(status).json({
+      error: status === 429 ? 'API 호출 한도 초과 — 1분 후 다시 시도해주세요' : 'AI 변환에 실패했습니다',
       message: error.message,
     });
   }

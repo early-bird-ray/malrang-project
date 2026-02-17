@@ -1284,34 +1284,38 @@ export default function MallangApp() {
     }
   }, [adWatching, adProgress]);
 
-  // Gemini 직접 호출 헬퍼
-  const callGemini = async (systemPrompt, userPrompt) => {
+  // Gemini 직접 호출 헬퍼 (429 자동 재시도)
+  const callGemini = async (systemPrompt, userPrompt, retries = 2) => {
     const apiKey = process.env.REACT_APP_GEMINI_API_KEY;
     if (!apiKey) throw new Error('Gemini API 키가 설정되지 않았습니다');
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ parts: [{ text: userPrompt }] }],
-        generationConfig: { temperature: 0.7, responseMimeType: 'application/json' },
-      }),
-    });
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => '');
-      console.error('Gemini API error:', res.status, errBody);
-      throw new Error(`Gemini API error: ${res.status}`);
-    }
-    const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('Gemini 응답이 비어있습니다');
-    try {
-      return JSON.parse(text);
-    } catch {
-      // JSON이 코드블록으로 감싸진 경우 처리
-      const jsonMatch = text.match(/```json?\s*([\s\S]*?)```/);
-      if (jsonMatch) return JSON.parse(jsonMatch[1].trim());
-      throw new Error('Gemini 응답 파싱 실패');
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ parts: [{ text: userPrompt }] }],
+          generationConfig: { temperature: 0.7, responseMimeType: 'application/json' },
+        }),
+      });
+      if (res.status === 429 && attempt < retries) {
+        await new Promise(r => setTimeout(r, (attempt + 1) * 3000));
+        continue;
+      }
+      if (res.status === 429) throw new Error('API 호출 한도 초과 — 1분 후 다시 시도해주세요');
+      if (!res.ok) {
+        const errBody = await res.text().catch(() => '');
+        console.error('Gemini API error:', res.status, errBody);
+        throw new Error(`Gemini API error: ${res.status}`);
+      }
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!text) throw new Error('Gemini 응답이 비어있습니다');
+      try { return JSON.parse(text); } catch {
+        const jsonMatch = text.match(/```json?\s*([\s\S]*?)```/);
+        if (jsonMatch) return JSON.parse(jsonMatch[1].trim());
+        throw new Error('Gemini 응답 파싱 실패');
+      }
     }
   };
 
@@ -1381,10 +1385,14 @@ JSON 형식:
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
           console.error('Server transform error:', errData);
+          // 429(한도초과)는 클라이언트 재시도해도 같으므로 바로 에러 표시
+          if (response.status === 429) throw new Error('API 호출 한도 초과 — 1분 후 다시 시도해주세요');
           throw new Error(errData.message || errData.error || `서버 에러 ${response.status}`);
         }
         result = await response.json();
       } catch (serverErr) {
+        // 429는 클라이언트도 같은 키라 재시도 의미없음 → 바로 에러
+        if (serverErr.message?.includes('한도 초과')) throw serverErr;
         console.error('Server API failed, trying client fallback:', serverErr.message);
         // 직접 Gemini 호출 (서버와 동일한 프롬프트)
         result = await callGemini(buildTransformPrompt(), conflictText);
