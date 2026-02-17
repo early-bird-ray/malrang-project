@@ -28,14 +28,7 @@ service cloud.firestore {
       // 본인만 읽기/쓰기
       allow read: if isOwner(uid);
       allow create: if isOwner(uid);
-      allow update: if isOwner(uid)
-        // grapePoints는 0 이상이어야 함
-        && request.resource.data.grapePoints >= 0
-        // totalGrapesEarned는 감소 불가 (필드 없는 초기 상태 허용)
-        && (
-          !('totalGrapesEarned' in resource.data)
-          || request.resource.data.totalGrapesEarned >= resource.data.totalGrapesEarned
-        );
+      allow update: if isOwner(uid);
       allow delete: if false; // 삭제 불가
 
       // 개인 감정 기록

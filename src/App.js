@@ -972,7 +972,10 @@ export default function MallangApp() {
   useEffect(() => {
     if (!authUser) return;
     const unsubscribe = subscribeToMoodHistory(authUser.uid, (moods) => {
-      setMoodHistory(moods);
+      // Firestore 서브컬렉션에 데이터가 있으면 반영, 없으면 레거시 데이터 유지
+      if (moods && moods.length > 0) {
+        setMoodHistory(moods);
+      }
     });
     return () => unsubscribe();
   }, [authUser]);
@@ -1022,22 +1025,36 @@ export default function MallangApp() {
           }
         }
       },
-      onGrapeBoardsUpdate: (boards) => setGrapeBoards(boards.map(b => ({ ...b, current: b.progress || b.current || 0 }))),
-      onCouponsUpdate: (coupons) => {
-        const mapped = coupons.map(c => ({
-          ...c,
-          from: c.fromUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
-          to: c.toUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
-        }));
-        setMyCoupons(mapped);
+      onGrapeBoardsUpdate: (boards) => {
+        if (boards && boards.length > 0) {
+          setGrapeBoards(boards.map(b => ({ ...b, current: b.progress || b.current || 0 })));
+        }
       },
-      onPraisesUpdate: (praises) => setPraiseLog(praises.map(p => ({
-        ...p,
-        from: p.fromUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
-        date: p.createdAt ? new Date(p.createdAt).toLocaleDateString("ko-KR", { month: "long", day: "numeric" }) : p.date,
-      }))),
-      onChoresUpdate: (choreList) => setChores(choreList),
-      onShopListingsUpdate: (listings) => setShopCoupons(listings),
+      onCouponsUpdate: (coupons) => {
+        if (coupons && coupons.length > 0) {
+          const mapped = coupons.map(c => ({
+            ...c,
+            from: c.fromUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
+            to: c.toUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
+          }));
+          setMyCoupons(mapped);
+        }
+      },
+      onPraisesUpdate: (praises) => {
+        if (praises && praises.length > 0) {
+          setPraiseLog(praises.map(p => ({
+            ...p,
+            from: p.fromUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
+            date: p.createdAt ? new Date(p.createdAt).toLocaleDateString("ko-KR", { month: "long", day: "numeric" }) : p.date,
+          })));
+        }
+      },
+      onChoresUpdate: (choreList) => {
+        if (choreList && choreList.length > 0) setChores(choreList);
+      },
+      onShopListingsUpdate: (listings) => {
+        if (listings && listings.length > 0) setShopCoupons(listings);
+      },
     });
 
     return () => teardownCoupleListeners(coupleId);
@@ -6097,7 +6114,8 @@ A는 상황을 작성한 사람, B는 상대방이다.
                   setShowMoodPopup(false);
                   showToast(`오늘 기분: ${mood.emoji} ${mood.label}`);
                   if (authUser) {
-                    try { await saveMoodEntry(authUser.uid, moodEntry); } catch (e) { console.error('Mood save error:', e); }
+                    const { error } = await saveMoodEntry(authUser.uid, moodEntry);
+                    if (error) console.error('Mood save error:', error);
                   }
                 }} style={{
                   display: "flex", flexDirection: "column", alignItems: "center", gap: 6,

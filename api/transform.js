@@ -1,7 +1,5 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.REACT_APP_GEMINI_API_KEY);
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -11,6 +9,14 @@ export default async function handler(req, res) {
   if (!authHeader?.startsWith('Bearer ')) {
     return res.status(401).json({ error: '인증이 필요합니다' });
   }
+
+  const apiKey = process.env.GEMINI_API_KEY || process.env.REACT_APP_GEMINI_API_KEY;
+  if (!apiKey) {
+    console.error('Transform API: GEMINI_API_KEY not configured');
+    return res.status(500).json({ error: 'AI API 키가 설정되지 않았습니다. Vercel 환경변수를 확인해주세요.' });
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
 
   try {
     const { text, likedWords, dislikedWords, partnerPersonality } = req.body;
@@ -76,11 +82,24 @@ JSON 형식:
 
     const result = await model.generateContent(text);
     const responseText = result.response.text();
-    const parsed = JSON.parse(responseText);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(responseText);
+    } catch {
+      // JSON이 코드블록으로 감싸진 경우 처리
+      const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[1].trim());
+      } else {
+        console.error('Transform API: Failed to parse Gemini response:', responseText.substring(0, 500));
+        throw new Error('AI 응답 파싱 실패');
+      }
+    }
 
     return res.status(200).json(parsed);
   } catch (error) {
-    console.error('Transform API error:', error);
+    console.error('Transform API error:', error.message);
     return res.status(500).json({
       error: 'AI 변환에 실패했습니다',
       message: error.message,

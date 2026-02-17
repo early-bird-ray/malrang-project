@@ -1,7 +1,5 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.REACT_APP_GEMINI_API_KEY);
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
@@ -11,6 +9,14 @@ export default async function handler(req, res) {
   if (!authHeader?.startsWith('Bearer ')) {
     return res.status(401).json({ error: '인증이 필요합니다' });
   }
+
+  const apiKey = process.env.GEMINI_API_KEY || process.env.REACT_APP_GEMINI_API_KEY;
+  if (!apiKey) {
+    console.error('Judge API: GEMINI_API_KEY not configured');
+    return res.status(500).json({ error: 'AI API 키가 설정되지 않았습니다' });
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
 
   try {
     const { text } = req.body;
@@ -71,11 +77,23 @@ A는 상황을 작성한 사람, B는 상대방이다.
 
     const result = await model.generateContent(text);
     const responseText = result.response.text();
-    const parsed = JSON.parse(responseText);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(responseText);
+    } catch {
+      const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        parsed = JSON.parse(jsonMatch[1].trim());
+      } else {
+        console.error('Judge API: Failed to parse Gemini response:', responseText.substring(0, 500));
+        throw new Error('AI 응답 파싱 실패');
+      }
+    }
 
     return res.status(200).json(parsed);
   } catch (error) {
-    console.error('Judge API error:', error);
+    console.error('Judge API error:', error.message);
     return res.status(500).json({
       error: 'AI 분석에 실패했습니다',
       message: error.message,

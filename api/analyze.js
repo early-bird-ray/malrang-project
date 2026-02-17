@@ -8,12 +8,18 @@ export const config = {
   },
 };
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || process.env.REACT_APP_GEMINI_API_KEY);
-
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
+
+  const apiKey = process.env.GEMINI_API_KEY || process.env.REACT_APP_GEMINI_API_KEY;
+  if (!apiKey) {
+    console.error('Analyze API: GEMINI_API_KEY not configured');
+    return res.status(500).json({ error: 'AI API 키가 설정되지 않았습니다' });
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey);
 
   try {
     const form = formidable({ multiples: false });
@@ -87,7 +93,18 @@ export default async function handler(req, res) {
     ]);
 
     const responseText = result.response.text();
-    const analysisResult = JSON.parse(responseText);
+    let analysisResult;
+    try {
+      analysisResult = JSON.parse(responseText);
+    } catch {
+      const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) {
+        analysisResult = JSON.parse(jsonMatch[1].trim());
+      } else {
+        console.error('Analyze API: Failed to parse Gemini response:', responseText.substring(0, 500));
+        throw new Error('AI 응답 파싱 실패');
+      }
+    }
 
     // Add duration (estimated from file)
     analysisResult.duration = "분석 완료";
