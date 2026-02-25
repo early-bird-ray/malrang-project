@@ -4,722 +4,57 @@ import {
   ChevronRight, ChevronLeft, Copy, Share2, Check, X, Plus,
   Gift, Sparkles, Ticket,
   Send, Bell, Settings,
-  RefreshCw, Leaf,
+  RefreshCw,
   Trash2, LogOut
 } from "lucide-react";
-import { signInWithGoogle, logOut, onAuthChange, saveUserData, getUserData } from "./firebase";
+import { signInWithGoogle, logOut, saveUserData } from "./firebase";
 import { earnGrapes, spendGrapes, createGrapeBoard, updateGrapeBoard, updateGrapeBoardProgress, deleteGrapeBoard } from "./services/grapeService";
+import { submitAnswer } from "./services/dailyQuestionService";
+import { updateStreak } from "./services/streakService";
+import { submitGuess } from "./services/moodGuessService";
+import { trackScreenView, trackFeatureUse } from "./services/analyticsService";
 import { saveAiTransformEntry, updateUserData, generateUniqueInviteCode, registerInviteCode, saveMoodEntry } from "./services/userService";
 import { createCoupon, sendCoupon, useCoupon as markCouponUsed, undoUseCoupon, updateCoupon, deleteCoupon, createShopListing, deleteShopListing } from "./services/couponService";
 import { createPair } from "./services/pairService";
 import { createPraise } from "./services/praiseService";
-import { subscribeToUser, subscribeToMoodHistory, subscribeToAiTransformHistory } from "./services/listenerService";
-import { setupCoupleListeners, teardownCoupleListeners } from "./services/listenerService";
+import { useAuth } from "./context/AuthContext";
+import { useCouple } from "./context/CoupleContext";
+import { LANGS, LANG_LABELS, i18n } from "./constants/i18n";
+import { colors } from "./constants/colors";
+import { MOCK_USER, MOCK_CHORES, MOCK_GIFTS } from "./constants/mockData";
 
+// 컴포넌트 imports
+import CouponIcon from "./components/CouponIcon";
+import Toast from "./components/Toast";
+import GrapeCluster from "./components/GrapeCluster";
+import OnboardingScreen from "./components/OnboardingScreen";
+import DailyQuestionCard from "./components/DailyQuestionCard";
+import StreakBadge from "./components/StreakBadge";
+import MoodGuessCard from "./components/MoodGuessCard";
 
-// ─── i18n (Internationalization) ─────────────────────────
-const LANGS = ["ko", "en", "zh", "ja"];
-const LANG_LABELS = { ko: "한국어", en: "English", zh: "中文", ja: "日本語" };
-
-const i18n = {
-  // ── Splash / Welcome ──
-  splashSub:       { ko: "말랑해진 우리사이", en: "Softening our bond", zh: "让我们的关系更柔软", ja: "ふたりの距離をやわらかく" },
-  welcomeSub1:     { ko: "우리 사이를 더 달콤하게", en: "Make our bond sweeter", zh: "让我们的关系更甜蜜", ja: "ふたりの関係をもっと甘く" },
-  welcomeSub2:     { ko: "말랑말랑한 대화의 시작", en: "The start of a soft conversation", zh: "柔软对话的开始", ja: "やわらかい会話のはじまり" },
-  myName:          { ko: "내 이름 (닉네임)", en: "My Name (Nickname)", zh: "我的名字（昵称）", ja: "名前（ニックネーム）" },
-  namePlaceholder: { ko: "예: 말랑", en: "e.g. Mallang", zh: "例：软软", ja: "例：まるまる" },
-  partnerCode:     { ko: "짝꿍의 초대 코드", en: "Partner's Invite Code", zh: "伴侣的邀请码", ja: "パートナーの招待コード" },
-  codePlaceholder: { ko: "예: MALL-7K2X", en: "e.g. MALL-7K2X", zh: "例：MALL-7K2X", ja: "例：MALL-7K2X" },
-  startTogether:   { ko: "함께 시작하기", en: "Start Together", zh: "一起开始", ja: "一緒にはじめる" },
-  skipCode:        { ko: "초대 코드 없이 시작", en: "Start without code", zh: "没有邀请码也能开始", ja: "招待コードなしで始める" },
-  skipConfirm:     { ko: "초대 코드 없이 시작하면 짝꿍과 연결 없이 혼자 사용하게 돼요. 나중에 설정에서 연결할 수 있어요.", en: "Starting without a code means you'll use the app solo. You can connect later in settings.", zh: "没有邀请码将独自使用，稍后可在设置中连接。", ja: "招待コードなしで始めると一人で使うことになります。後で設定から接続できます。" },
-  continueAlone:   { ko: "혼자 시작하기", en: "Continue Alone", zh: "独自开始", ja: "ひとりで始める" },
-  enterCode:       { ko: "코드 입력하기", en: "Enter Code", zh: "输入邀请码", ja: "コードを入力" },
-  myInviteCode:    { ko: "나의 초대 코드", en: "My Invite Code", zh: "我的邀请码", ja: "わたしの招待コード" },
-  codeCopied:      { ko: "초대 코드가 복사되었어요!", en: "Invite code copied!", zh: "邀请码已复制！", ja: "招待コードをコピーしました！" },
-  or:              { ko: "또는", en: "or", zh: "或者", ja: "または" },
-  // ── Navigation ──
-  tabHome:    { ko: "홈", en: "Home", zh: "首页", ja: "ホーム" },
-  tabGrape:   { ko: "포도", en: "Grape", zh: "葡萄", ja: "ぶどう" },
-  tabChat:    { ko: "대화", en: "Chat", zh: "聊天", ja: "会話" },
-  tabShop:    { ko: "상점", en: "Shop", zh: "商店", ja: "ショップ" },
-  tabReport:  { ko: "분석", en: "Report", zh: "分析", ja: "分析" },
-  // ── Home ──
-  hello:          { ko: "안녕하세요", en: "Hello", zh: "你好", ja: "こんにちは" },
-  homeGreeting:   { ko: "오늘도 함께해요 💜", en: "Together again today 💜", zh: "今天也一起吧 💜", ja: "今日も一緒に 💜" },
-  partnerDefault: { ko: "짝꿍", en: "Partner", zh: "伴侣", ja: "パートナー" },
-  todoStatus:     { ko: "⚖️ 할일 현황", en: "⚖️ Task Status", zh: "⚖️ 任务状况", ja: "⚖️ タスク状況" },
-  todayTodo:      { ko: "오늘의 할 일", en: "Today's Tasks", zh: "今天的待办", ja: "今日のタスク" },
-  addTask:        { ko: "할 일 추가", en: "Add Task", zh: "添加任务", ja: "タスク追加" },
-  complete:       { ko: "완료", en: "Done", zh: "完成", ja: "完了" },
-  grapeBoard:     { ko: "포도판", en: "Grape Board", zh: "葡萄板", ja: "ぶどうボード" },
-  grapePoints:    { ko: "포도알", en: "Grapes", zh: "葡萄粒", ja: "ぶどう粒" },
-  chatHelper:     { ko: "대화 도우미", en: "Chat Helper", zh: "聊天助手", ja: "会話ヘルパー" },
-  praise:         { ko: "칭찬", en: "Praise", zh: "表扬", ja: "ほめる" },
-  praiseHistory:  { ko: "칭찬 기록", en: "Praise History", zh: "表扬记录", ja: "ほめる記録" },
-  noPraise:       { ko: "아직 칭찬 기록이 없어요", en: "No praise yet", zh: "还没有表扬记录", ja: "まだほめる記録がありません" },
-  praisePlaceholder: { ko: "칭찬 한마디를 적어보세요 💜", en: "Write a word of praise 💜", zh: "写一句表扬吧 💜", ja: "ほめ言葉を書いてみて 💜" },
-  send:           { ko: "보내기", en: "Send", zh: "发送", ja: "送る" },
-  // ── Grape Board ──
-  newBoard:      { ko: "새 포도판 만들기", en: "New Grape Board", zh: "新建葡萄板", ja: "新しいぶどうボード" },
-  boardTitle:    { ko: "포도판 이름", en: "Board Name", zh: "葡萄板名称", ja: "ボード名" },
-  goal:          { ko: "목표", en: "Goal", zh: "目标", ja: "目標" },
-  perSuccess:    { ko: "성공당", en: "Per Success", zh: "每次成功", ja: "成功ごと" },
-  owner:         { ko: "담당", en: "Owner", zh: "负责人", ja: "担当" },
-  ownerUs:       { ko: "우리", en: "Us", zh: "我们", ja: "ふたり" },
-  ownerMe:       { ko: "나", en: "Me", zh: "我", ja: "わたし" },
-  ownerPartner:  { ko: "상대", en: "Partner", zh: "对方", ja: "相手" },
-  create:        { ko: "만들기", en: "Create", zh: "创建", ja: "作成" },
-  register:      { ko: "등록하기", en: "Register", zh: "登记", ja: "登録" },
-  cancel:        { ko: "취소", en: "Cancel", zh: "取消", ja: "キャンセル" },
-  edit:          { ko: "수정", en: "Edit", zh: "编辑", ja: "編集" },
-  editSave:      { ko: "수정하기", en: "Save", zh: "保存修改", ja: "保存" },
-  delete:        { ko: "삭제", en: "Delete", zh: "删除", ja: "削除" },
-  noBoard:       { ko: "아직 포도판이 없어요", en: "No grape boards yet", zh: "还没有葡萄板", ja: "まだぶどうボードがありません" },
-  achieved:      { ko: "달성 완료! 🎉", en: "Goal achieved! 🎉", zh: "达成目标！🎉", ja: "目標達成！🎉" },
-  // ── Chat / AI Transform ──
-  aiTransform:     { ko: "AI 말투 변환", en: "AI Tone Transform", zh: "AI语气转换", ja: "AIトーン変換" },
-  aiTransformBtn:  { ko: "AI 말투 변환하기", en: "Transform with AI", zh: "用AI转换语气", ja: "AIでトーン変換" },
-  conflictPlaceholder: { ko: "지금 하고 싶은 말을 적어보세요...", en: "Write what you want to say...", zh: "写下你想说的话...", ja: "今伝えたいことを書いてみて..." },
-  transformed:     { ko: "변환된 표현", en: "Transformed", zh: "转换后的表达", ja: "変換後の表現" },
-  original:        { ko: "원래 표현", en: "Original", zh: "原始表达", ja: "元の表現" },
-  copyDone:        { ko: "문장이 복사되었어요! 📋", en: "Copied! 📋", zh: "已复制！📋", ja: "コピーしました！📋" },
-  // ── Coupon ──
-  coupon:        { ko: "쿠폰", en: "Coupon", zh: "优惠券", ja: "クーポン" },
-  sentCoupon:    { ko: "보낸 쿠폰", en: "Sent", zh: "发送的", ja: "送った" },
-  rcvdCoupon:    { ko: "받은 쿠폰", en: "Received", zh: "收到的", ja: "もらった" },
-  newCoupon:     { ko: "새 쿠폰 만들기", en: "New Coupon", zh: "新建优惠券", ja: "新しいクーポン" },
-  couponName:    { ko: "쿠폰 이름", en: "Coupon Name", zh: "优惠券名称", ja: "クーポン名" },
-  couponDesc:    { ko: "설명을 입력해보세요", en: "Add a description", zh: "请输入描述", ja: "説明を入力" },
-  sendNow:       { ko: "바로 보내기", en: "Send Now", zh: "立即发送", ja: "すぐ送る" },
-  keepDraft:     { ko: "보관하기", en: "Save Draft", zh: "保存", ja: "保存" },
-  use:           { ko: "사용하기", en: "Use", zh: "使用", ja: "使う" },
-  used:          { ko: "사용완료", en: "Used", zh: "已使用", ja: "使用済み" },
-  undoUse:       { ko: "사용완료 취소", en: "Undo", zh: "取消使用", ja: "使用取消" },
-  expiry:        { ko: "유효기간", en: "Validity", zh: "有效期", ja: "有効期間" },
-  noExpiry:      { ko: "무제한", en: "No Limit", zh: "无限制", ja: "無制限" },
-  all:           { ko: "전체", en: "All", zh: "全部", ja: "すべて" },
-  unused:        { ko: "미사용", en: "Unused", zh: "未使用", ja: "未使用" },
-  expired:       { ko: "만료", en: "Expired", zh: "已过期", ja: "期限切れ" },
-  // ── Shop ──
-  shop:           { ko: "상점", en: "Shop", zh: "商店", ja: "ショップ" },
-  gifticon:       { ko: "기프티콘", en: "Gift Cards", zh: "礼品卡", ja: "ギフトカード" },
-  grapeShop:      { ko: "포도알 상점", en: "Grape Shop", zh: "葡萄粒商店", ja: "ぶどうショップ" },
-  credits:        { ko: "크레딧", en: "Credits", zh: "积分", ja: "クレジット" },
-  myGrapes:       { ko: "보유 포도알", en: "My Grapes", zh: "我的葡萄粒", ja: "所持ぶどう" },
-  giftTo:         { ko: "선물하러 가기", en: "Send Gift", zh: "去送礼", ja: "プレゼントする" },
-  // ── Report ──
-  report:            { ko: "관계 보고서", en: "Relationship Report", zh: "关系报告", ja: "関係レポート" },
-  voiceAnalysis:     { ko: "대화 분석", en: "Voice Analysis", zh: "对话分析", ja: "会話分析" },
-  relationScore:     { ko: "우리의 관계 점수", en: "Our Relationship Score", zh: "我们的关系分数", ja: "ふたりの関係スコア" },
-  todayAnalysis:     { ko: "오늘의 관계 분석", en: "Today's Analysis", zh: "今日的关系分析", ja: "今日の関係分析" },
-  watchAdBtn:        { ko: "🎬 광고 보고 오늘 분석 보기", en: "🎬 Watch ad to see analysis", zh: "🎬 看广告查看分析", ja: "🎬 広告を見て分析を見る" },
-  adSupport:         { ko: "Support", en: "Support", zh: "支持", ja: "サポート" },
-  adSupportDesc:     { ko: "광고 시청은 서비스 운영에 도움이 되며, 더 정확한 AI 분석 개선에 사용됩니다.", en: "Watching ads helps support the service and improve AI analysis.", zh: "观看广告有助于服务运营和改进AI分析。", ja: "広告視聴はサービス運営とAI分析の改善に役立ちます。" },
-  watchAdTitle:      { ko: "광고 시청하고 분석 보기", en: "Watch Ad for Analysis", zh: "看广告查看分析", ja: "広告を見て分析を見る" },
-  watchAdDesc:       { ko: "짧은 광고 2편을 시청하면 오늘의 관계 분석을 확인할 수 있어요", en: "Watch 2 short ads to unlock today's analysis", zh: "观看2个短广告即可查看今日分析", ja: "短い広告2本を見ると今日の分析が見れます" },
-  adStart1:          { ko: "광고 시청 시작 (1/2)", en: "Start Ad (1/2)", zh: "开始播放广告 (1/2)", ja: "広告再生開始 (1/2)" },
-  adComplete1:       { ko: "✅ 1편 완료! 다음 광고로 →", en: "✅ 1 done! Next ad →", zh: "✅ 第1个完成！下一个 →", ja: "✅ 1本完了！次の広告へ →" },
-  adStart2:          { ko: "마지막 광고 시청 (2/2)", en: "Last Ad (2/2)", zh: "最后一个广告 (2/2)", ja: "最後の広告 (2/2)" },
-  adComplete2:       { ko: "🎉 완료! 분석 보기", en: "🎉 Done! View Analysis", zh: "🎉 完成！查看分析", ja: "🎉 完了！分析を見る" },
-  adWait:            { ko: "광고가 끝날 때까지 기다려주세요", en: "Please wait until the ad ends", zh: "请等广告播放完毕", ja: "広告が終わるまでお待ちください" },
-  adArea:            { ko: "광고 영역", en: "Ad Space", zh: "广告区域", ja: "広告エリア" },
-  weeklyTip:         { ko: "이번 주 팁", en: "Weekly Tip", zh: "本周提示", ja: "今週のヒント" },
-  reportDone:        { ko: "오늘 분석 열람 완료", en: "Today's report viewed", zh: "今日分析已查看", ja: "今日の分析閲覧済み" },
-  // ── Settings ──
-  settings:       { ko: "⚙️ 설정", en: "⚙️ Settings", zh: "⚙️ 设置", ja: "⚙️ 設定" },
-  myProfile:      { ko: "내 프로필", en: "My Profile", zh: "我的资料", ja: "プロフィール" },
-  myNameLabel:    { ko: "내 이름", en: "My Name", zh: "我的名字", ja: "名前" },
-  notifications:  { ko: "알림 설정", en: "Notifications", zh: "通知设置", ja: "通知設定" },
-  on:             { ko: "켜짐", en: "On", zh: "开启", ja: "オン" },
-  off:            { ko: "꺼짐", en: "Off", zh: "关闭", ja: "オフ" },
-  language:       { ko: "언어", en: "Language", zh: "语言", ja: "言語" },
-  chatPrefs:      { ko: "내 대화 취향", en: "Chat Preferences", zh: "聊天偏好", ja: "会話の好み" },
-  likedWords:     { ko: "내가 좋아하는 말", en: "Words I like", zh: "我喜欢的话", ja: "好きな言葉" },
-  dislikedWords:  { ko: "내가 싫어하는 말", en: "Words I dislike", zh: "我不喜欢的话", ja: "苦手な言葉" },
-  saveTaste:      { ko: "대화 취향 저장", en: "Save Preferences", zh: "保存偏好", ja: "好みを保存" },
-  tasteSaved:     { ko: "대화 취향이 저장되었어요! 💜", en: "Preferences saved! 💜", zh: "偏好已保存！💜", ja: "好みを保存しました！💜" },
-  retakeSurvey:   { ko: "성향 분석 다시하기", en: "Retake Survey", zh: "重新做性格测试", ja: "性格診断をやり直す" },
-  doSurveyFirst:  { ko: "성향 분석을 먼저 완료해주세요!", en: "Complete the survey first!", zh: "请先完成性格测试！", ja: "まず性格診断を完了してください！" },
-  close:          { ko: "닫기", en: "Close", zh: "关闭", ja: "閉じる" },
-  // ── Survey ──
-  surveyTitle:    { ko: "커플 성향 분석", en: "Couple Style Analysis", zh: "情侣性格分析", ja: "カップル性格分析" },
-  surveyDesc:     { ko: "우리 관계를 더 잘 이해하기 위한 짧은 질문이에요", en: "Short questions to better understand our relationship", zh: "为了更好地了解我们的关系的简短问题", ja: "ふたりの関係をもっとよく知るための質問です" },
-  surveyStart:    { ko: "시작하기", en: "Start", zh: "开始", ja: "始める" },
-  prev:           { ko: "← 이전", en: "← Back", zh: "← 上一步", ja: "← 戻る" },
-  next:           { ko: "다음 →", en: "Next →", zh: "下一步 →", ja: "次へ →" },
-  submitSurvey:   { ko: "제출하기 →", en: "Submit →", zh: "提交 →", ja: "提出 →" },
-  // ── Misc ──
-  todayOnly:       { ko: "⚡ 오늘만", en: "⚡ Today only", zh: "⚡ 仅限今天", ja: "⚡ 今日だけ" },
-  daily:           { ko: "매일", en: "Daily", zh: "每天", ja: "毎日" },
-  confirm:         { ko: "확인", en: "OK", zh: "确认", ja: "確認" },
-  save:            { ko: "저장", en: "Save", zh: "保存", ja: "保存" },
-  analyzing:       { ko: "분석 중...", en: "Analyzing...", zh: "分析中...", ja: "分析中..." },
-  uploadAudio:     { ko: "대화 녹음 파일 업로드", en: "Upload conversation audio", zh: "上传对话录音", ja: "会話の録音をアップロード" },
-  positive:        { ko: "긍정", en: "Positive", zh: "积极", ja: "ポジティブ" },
-  negative:        { ko: "부정", en: "Negative", zh: "消极", ja: "ネガティブ" },
-  neutral:         { ko: "중립", en: "Neutral", zh: "中立", ja: "ニュートラル" },
-  chatSuccess:     { ko: "대화 성공!", en: "Chat success!", zh: "聊天成功！", ja: "会話成功！" },
-  // Days
-  mon: { ko: "월", en: "Mon", zh: "一", ja: "月" },
-  tue: { ko: "화", en: "Tue", zh: "二", ja: "火" },
-  wed: { ko: "수", en: "Wed", zh: "三", ja: "水" },
-  thu: { ko: "목", en: "Thu", zh: "四", ja: "木" },
-  fri: { ko: "금", en: "Fri", zh: "五", ja: "金" },
-  sat: { ko: "토", en: "Sat", zh: "六", ja: "土" },
-  sun: { ko: "일", en: "Sun", zh: "日", ja: "日" },
-};
-
-// ─── Mock Data ────────────────────────────────────────────
-const MOCK_USER = {
-  id: "u1",
-  name: "",
-  partnerName: "",
-  partnerConnected: false,
-  partnerId: "",
-  coupleId: "",
-  inviteCode: "",
-  isSubscribed: false,
-  grapePoints: 0,
-  totalGrapes: 0,
-  mallangCredits: 0,
-  surveyCompleted: false,
-  survey: null,
-  partnerSurvey: null,
-};
-
-const MOCK_CHORES = [];
-
-const MOCK_GIFTS = [
-  { id: 1, name: "스타벅스 아메리카노", credits: 4500, emoji: "☕", category: "기프티콘" },
-  { id: 2, name: "배스킨라빈스 싱글킹", credits: 4700, emoji: "🍦", category: "기프티콘" },
-  { id: 3, name: "설거지 1회권", grapes: 10, emoji: "🍽️", category: "커플쿠폰" },
-  { id: 4, name: "안마 30분권", grapes: 15, emoji: "💆", category: "커플쿠폰" },
-  { id: 5, name: "영화 선택권", grapes: 12, emoji: "🎬", category: "커플쿠폰" },
-  { id: 6, name: "치킨 기프티콘", credits: 20000, emoji: "🍗", category: "기프티콘" },
-  { id: 7, name: "편의점 5천원권", credits: 5000, emoji: "🏪", category: "기프티콘" },
-  { id: 8, name: "늦잠 허가권", grapes: 8, emoji: "😴", category: "커플쿠폰" },
-];
-
-
-// ─── Styles ───────────────────────────────────────────────
-const colors = {
-  bg: "#FAFAF8",
-  card: "#FFFFFF",
-  primary: "#7C5CFC",
-  primaryLight: "#EDE9FE",
-  primaryDark: "#5B3FD4",
-  grape: "#8B5CF6",
-  grapeLight: "#F3EEFF",
-  grapeDark: "#6D28D9",
-  warm: "#FF8C69",
-  warmLight: "#FFF0EB",
-  mint: "#10B981",
-  mintLight: "#ECFDF5",
-  rose: "#F43F5E",
-  roseLight: "#FFF1F2",
-  gold: "#F59E0B",
-  goldLight: "#FFFBEB",
-  text: "#1A1A2E",
-  textSecondary: "#6B7280",
-  textTertiary: "#9CA3AF",
-  border: "#F0F0ED",
-  borderActive: "#E5E5E0",
-  shadow: "0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02)",
-  shadowMd: "0 4px 12px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)",
-  shadowLg: "0 8px 24px rgba(0,0,0,0.08)",
-};
-
-// ─── Coupon Icon Component ────────────────────────────────
-function CouponIcon({ size = 20, color = "#7C3AED" }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M2 9V6.5C2 5.67 2.67 5 3.5 5h17c.83 0 1.5.67 1.5 1.5V9c-1.1 0-2 .9-2 2s.9 2 2 2v2.5c0 .83-.67 1.5-1.5 1.5h-17C2.67 17 2 16.33 2 15.5V13c1.1 0 2-.9 2-2s-.9-2-2-2z" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-      <path d="M9 5v1.5M9 10v1M9 14.5V17" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeDasharray="0.5 3"/>
-    </svg>
-  );
-}
-
-// ─── Toast Component ──────────────────────────────────────
-function Toast({ message, visible, type = "success" }) {
-  if (!visible) return null;
-  const bgColor = type === "success" ? colors.mint : type === "warning" ? colors.gold : colors.primary;
-  return (
-    <div style={{
-      position: "fixed", top: 48, left: "50%", transform: "translateX(-50%)",
-      background: bgColor, color: "#fff", padding: "10px 20px", borderRadius: 12,
-      fontSize: 13, fontWeight: 600, zIndex: 9999, boxShadow: colors.shadowLg,
-      animation: "slideDown 0.3s ease", maxWidth: "85vw", textAlign: "center",
-    }}>
-      {message}
-    </div>
-  );
-}
-
-// ─── Grape Cluster Visualization ──────────────────────────
-function GrapeCluster({ filled, total, size = "large" }) {
-  const s = size === "large" ? 22 : 14;
-  const gap = size === "large" ? 3 : 2;
-  const rows = [];
-  let idx = 0;
-  const pattern = [3, 4, 5, 5, 4, 4, 3, 3, 2, 2, 1];
-  const maxItems = total || pattern.reduce((a, b) => a + b, 0);
-
-  for (let r = 0; r < pattern.length && idx < maxItems; r++) {
-    const count = Math.min(pattern[r], maxItems - idx);
-    const row = [];
-    for (let c = 0; c < count && idx < maxItems; c++) {
-      const isFilled = idx < filled;
-      row.push(
-        <div key={idx} style={{
-          width: s, height: s, borderRadius: "50%",
-          background: isFilled
-            ? `linear-gradient(135deg, #A78BFA, #7C3AED)`
-            : "#EDE9FE",
-          border: isFilled ? "none" : "1.5px dashed #C4B5FD",
-          transition: "all 0.3s ease",
-          boxShadow: isFilled ? "0 2px 4px rgba(124,58,237,0.3)" : "none",
-        }} />
-      );
-      idx++;
-    }
-    rows.push(
-      <div key={r} style={{ display: "flex", gap, justifyContent: "center" }}>
-        {row}
-      </div>
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap, alignItems: "center" }}>
-      <div style={{ width: 4, height: 16, background: "#8B6914", borderRadius: 2, marginBottom: -2 }} />
-      <Leaf size={16} color="#22C55E" style={{ marginBottom: -6, marginTop: -8 }} />
-      {rows}
-    </div>
-  );
-}
-
-
-// ─── Survey / Onboarding Screen ───────────────────────────
-function OnboardingScreen({ onComplete, onClose, savedAnswers = {}, myInviteCode = "" }) {
-  const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState(savedAnswers);
-  const [inviteCode, setInviteCode] = useState("");
-  const [textInput, setTextInput] = useState(savedAnswers.forbiddenWords || "");
-  const [showExitConfirm, setShowExitConfirm] = useState(false);
-
-  const questions = [
-    {
-      title: "연락의 적정 온도",
-      subtitle: "바쁜 일과 중 짝꿍의 카톡, 나에게는 어떤 의미인가요?",
-      key: "contactTemp",
-      emoji: "📱",
-      options: [
-        { value: "support", label: "든든한 응원이자 사랑이다", emoji: "💪" },
-        { value: "burden", label: "가끔은 답장 부담이 느껴진다", emoji: "😅" },
-        { value: "practical", label: "용건이 있을 때만 하는 게 편하다", emoji: "📋" },
-      ],
-    },
-    {
-      title: "칭찬을 받는 기분",
-      subtitle: "짝꿍이 나를 칭찬할 때, 언제 가장 진심이 느껴지나요?",
-      key: "praiseStyle",
-      emoji: "🥰",
-      options: [
-        { value: "private", label: "둘만 있을 때 조용히 말해줄 때", emoji: "🤫" },
-        { value: "public", label: "지인들 앞에서 내 자랑을 해줄 때", emoji: "🗣️" },
-        { value: "letter", label: "예상치 못한 깜짝 편지로 전해줄 때", emoji: "💌" },
-      ],
-    },
-    {
-      title: "사랑을 느끼는 언어",
-      subtitle: "짝꿍이 어떻게 할 때 '아, 나 사랑받고 있구나'라고 확신하나요?",
-      key: "loveLanguage",
-      emoji: "💜",
-      options: [
-        { value: "words", label: "따뜻한 말 한마디", emoji: "💬" },
-        { value: "service", label: "말없이 도와주는 가사", emoji: "🧹" },
-        { value: "touch", label: "다정한 스킨십", emoji: "🤗" },
-        { value: "gifts", label: "작지만 정성어린 선물", emoji: "🎁" },
-      ],
-    },
-    {
-      title: "가사와 노력의 인정",
-      subtitle: "집안일을 마친 후, 내가 가장 듣고 싶은 반응은?",
-      key: "choreRecognition",
-      emoji: "🏠",
-      options: [
-        { value: "immediate", label: '즉시 알아보고 "고생했어"라고 하기', emoji: "👏" },
-        { value: "remember", label: "나중에라도 그 수고를 기억해 주기", emoji: "🧠" },
-        { value: "action", label: "말보다는 다음번에 짝꿍이 대신 해주기", emoji: "🤝" },
-      ],
-    },
-    {
-      title: "서운함의 신호",
-      subtitle: "서운한 감정이 들 때, 나는 주로 어떻게 행동하나요?",
-      key: "hurtSignal",
-      emoji: "😢",
-      options: [
-        { value: "direct", label: "즉시 조목조목 말한다", emoji: "🗣️" },
-        { value: "cold", label: "말투가 차가워지며 알아주길 기다린다", emoji: "🧊" },
-        { value: "withdraw", label: "생각을 정리할 시간이 필요해 입을 닫는다", emoji: "🤐" },
-      ],
-    },
-    {
-      title: "갈등 시 필요한 산소",
-      subtitle: "다툼이 시작되려 할 때, 나에게 가장 필요한 것은?",
-      key: "cooldown",
-      emoji: "🌬️",
-      options: [
-        { value: "now", label: "그 자리에서 끝까지 대화하기", emoji: "💬" },
-        { value: "short", label: "잠시(30분 내외) 감정 가라앉히기", emoji: "⏳" },
-        { value: "long", label: "하루 정도 충분히 생각할 시간 갖기", emoji: "🌙" },
-      ],
-    },
-    {
-      title: "대화의 안전장치",
-      subtitle: '싸울 때 이 말만은 정말 듣기 싫어요 (직접 입력해주세요)',
-      key: "forbiddenWords",
-      emoji: "🚫",
-      type: "text",
-      placeholder: "예: 그게 왜 니 잘못이야?, 그래서 어쩌라고?, 네가 항상 그렇지 뭐",
-    },
-    {
-      title: "대화의 지향점",
-      subtitle: "내가 힘든 고민을 털어놓을 때, 짝꿍이 어떻게 해주길 바라나요?",
-      key: "conversationGoal",
-      emoji: "🧭",
-      options: [
-        { value: "empathy", label: "내 편이 되어주는 감정적 공감", emoji: "🫂" },
-        { value: "advice", label: "상황을 해결할 수 있는 객관적 조언", emoji: "🎯" },
-        { value: "presence", label: "말없이 곁에 있어 주는 것", emoji: "🤲" },
-      ],
-    },
-    {
-      title: "사과의 온전한 전달",
-      subtitle: "갈등 후 짝꿍의 사과, 어떤 방식이 내 마음을 가장 잘 녹이나요?",
-      key: "apologyStyle",
-      emoji: "💐",
-      options: [
-        { value: "verbal", label: "정중한 말과 사과 톡", emoji: "💬" },
-        { value: "touch", label: "진심 어린 포옹과 스킨십", emoji: "🤗" },
-        { value: "gift", label: "맛있는 음식이나 가벼운 선물", emoji: "🎁" },
-        { value: "promise", label: "재발 방지를 위한 구체적인 약속", emoji: "📝" },
-      ],
-    },
-    {
-      title: "비언어적 민감도",
-      subtitle: "대화할 때 말의 내용보다 짝꿍의 표정이나 말투에 더 예민한 편인가요?",
-      key: "nonverbalSensitivity",
-      emoji: "👀",
-      options: [
-        { value: "high", label: "매우 그렇다 (말투가 중요)", emoji: "🎭" },
-        { value: "mid", label: "중간이다", emoji: "⚖️" },
-        { value: "low", label: "내용만 명확하면 상관없다", emoji: "📄" },
-      ],
-    },
-  ];
-
-  const totalSteps = questions.length + 1; // +1 for invite code step
-
-  if (step < questions.length) {
-    const q = questions[step];
-    const isTextQ = q.type === "text";
-    return (
-      <div style={{
-        minHeight: "100vh", background: "#FAFAF8",
-        display: "flex", flexDirection: "column", alignItems: "center",
-      }}>
-        <div style={{ width: "100%", maxWidth: 420 }}>
-        {/* 종료 확인 모달 */}
-        {showExitConfirm && (
-          <div style={{
-            position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
-            zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <div style={{
-              background: "#fff", borderRadius: 20, padding: "28px 24px",
-              width: "85%", maxWidth: 320, textAlign: "center",
-            }}>
-              <div style={{ fontSize: 48, marginBottom: 12 }}>🤔</div>
-              <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
-                분석을 종료하시겠습니까?
-              </h3>
-              <p style={{ fontSize: 13, color: colors.rose, lineHeight: 1.6, marginBottom: 6, fontWeight: 600 }}>
-                분석이 완료되지 않았습니다.
-              </p>
-              <p style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.6, marginBottom: 20 }}>
-                모든 질문(11개)을 완료해야 분석 결과가 저장됩니다.<br/>
-                지금 종료하면 작성한 내용은 저장되지 않아요.
-              </p>
-              <div style={{ display: "flex", gap: 8 }}>
-                <button onClick={() => setShowExitConfirm(false)} style={{
-                  flex: 1, padding: "12px", borderRadius: 12,
-                  background: "#F3F4F6", border: "none",
-                  fontSize: 14, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
-                }}>
-                  계속하기
-                </button>
-                <button onClick={() => {
-                  setShowExitConfirm(false);
-                  onClose && onClose(null); // null = 저장하지 않음
-                }} style={{
-                  flex: 1, padding: "12px", borderRadius: 12,
-                  background: colors.primary, border: "none",
-                  fontSize: 14, fontWeight: 600, color: "#fff", cursor: "pointer",
-                }}>
-                  종료하기
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          {step > 0 ? (
-            <button onClick={() => setStep(step - 1)} style={{ background: "none", border: "none", padding: 8, cursor: "pointer" }}>
-              <ChevronLeft size={20} color={colors.textSecondary} />
-            </button>
-          ) : <div style={{ width: 36 }} />}
-          <span style={{ fontSize: 13, color: colors.textTertiary }}>{step + 1} / {totalSteps}</span>
-          <button onClick={() => setShowExitConfirm(true)} style={{
-            background: "none", border: "none", padding: 8, cursor: "pointer",
-          }}>
-            <X size={20} color={colors.textSecondary} />
-          </button>
-        </div>
-
-        <div style={{ flex: 1, padding: "20px 24px" }}>
-          <div style={{
-            width: "100%", height: 4, background: "#E5E7EB", borderRadius: 2, marginBottom: 28,
-          }}>
-            <div style={{
-              width: `${((step + 1) / totalSteps) * 100}%`, height: 4,
-              background: `linear-gradient(90deg, ${colors.primary}, ${colors.grape})`,
-              borderRadius: 2, transition: "width 0.4s ease",
-            }} />
-          </div>
-
-          <div style={{ fontSize: 36, marginBottom: 12 }}>{q.emoji}</div>
-          <h2 style={{ fontSize: 20, fontWeight: 700, color: colors.text, marginBottom: 6, letterSpacing: "-0.3px" }}>
-            {q.title}
-          </h2>
-          <p style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 24, lineHeight: 1.5 }}>{q.subtitle}</p>
-
-          {isTextQ ? (
-            /* Text input question (Q7 - forbidden words) */
-            <div>
-              <textarea
-                value={textInput}
-                onChange={e => setTextInput(e.target.value)}
-                placeholder={q.placeholder}
-                style={{
-                  width: "100%", minHeight: 120, padding: "14px 16px", borderRadius: 14,
-                  border: `1.5px solid ${colors.border}`, fontSize: 14, resize: "none",
-                  outline: "none", lineHeight: 1.7, boxSizing: "border-box",
-                  fontFamily: "inherit",
-                }}
-              />
-              <div style={{
-                background: colors.roseLight, borderRadius: 10, padding: "10px 14px",
-                fontSize: 12, color: colors.rose, marginTop: 12, lineHeight: 1.5,
-              }}>
-                🚫 여기에 적은 표현은 AI가 절대 추천하지 않아요. 짝꿍에게도 공유돼요.
-              </div>
-              <button onClick={() => {
-                if (textInput.trim()) {
-                  setAnswers({ ...answers, [q.key]: textInput.trim() });
-                  setTextInput("");
-                  setStep(step + 1);
-                }
-              }} disabled={!textInput.trim()} style={{
-                width: "100%", padding: "14px", borderRadius: 12, marginTop: 16,
-                background: textInput.trim()
-                  ? `linear-gradient(135deg, ${colors.primary}, ${colors.primaryDark})`
-                  : "#E5E7EB",
-                color: textInput.trim() ? "#fff" : "#9CA3AF",
-                border: "none", fontSize: 15, fontWeight: 700,
-                cursor: textInput.trim() ? "pointer" : "default",
-              }}>
-                다음으로
-              </button>
-            </div>
-          ) : (
-            /* Multiple choice questions */
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {q.options.map((opt) => {
-                const selected = answers[q.key] === opt.value;
-                return (
-                  <button key={opt.value} onClick={() => {
-                    setAnswers({ ...answers, [q.key]: opt.value });
-                    setTimeout(() => setStep(step + 1), 300);
-                  }} style={{
-                    display: "flex", alignItems: "center", gap: 14,
-                    padding: "16px 18px", borderRadius: 14,
-                    border: selected ? `2px solid ${colors.primary}` : `1.5px solid ${colors.border}`,
-                    background: selected ? colors.primaryLight : "#fff",
-                    cursor: "pointer", textAlign: "left", transition: "all 0.2s ease",
-                  }}>
-                    <span style={{ fontSize: 26, flexShrink: 0 }}>{opt.emoji}</span>
-                    <div style={{ flex: 1, fontSize: 14, fontWeight: 500, color: colors.text, lineHeight: 1.4 }}>
-                      {opt.label}
-                    </div>
-                    {selected && <Check size={18} color={colors.primary} style={{ flexShrink: 0 }} />}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Invite code step
-  return (
-    <div style={{
-      minHeight: "100vh", background: "#FAFAF8",
-      display: "flex", flexDirection: "column", alignItems: "center",
-    }}>
-      <div style={{ width: "100%", maxWidth: 420 }}>
-      {/* 종료 확인 모달 */}
-      {showExitConfirm && (
-        <div style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
-          zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <div style={{
-            background: "#fff", borderRadius: 20, padding: "28px 24px",
-            width: "85%", maxWidth: 320, textAlign: "center",
-          }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>🤔</div>
-            <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
-              분석을 종료하시겠습니까?
-            </h3>
-            <p style={{ fontSize: 13, color: colors.rose, lineHeight: 1.6, marginBottom: 6, fontWeight: 600 }}>
-              분석이 완료되지 않았습니다.
-            </p>
-            <p style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.6, marginBottom: 20 }}>
-              모든 질문(11개)을 완료해야 분석 결과가 저장됩니다.<br/>
-              지금 종료하면 작성한 내용은 저장되지 않아요.
-            </p>
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={() => setShowExitConfirm(false)} style={{
-                flex: 1, padding: "12px", borderRadius: 12,
-                background: "#F3F4F6", border: "none",
-                fontSize: 14, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
-              }}>
-                계속하기
-              </button>
-              <button onClick={() => {
-                setShowExitConfirm(false);
-                onClose && onClose(null);
-              }} style={{
-                flex: 1, padding: "12px", borderRadius: 12,
-                background: colors.primary, border: "none",
-                fontSize: 14, fontWeight: 600, color: "#fff", cursor: "pointer",
-              }}>
-                종료하기
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div style={{ padding: "16px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <button onClick={() => setStep(step - 1)} style={{ background: "none", border: "none", padding: 8, cursor: "pointer" }}>
-          <ChevronLeft size={20} color={colors.textSecondary} />
-        </button>
-        <span style={{ fontSize: 13, color: colors.textTertiary }}>{totalSteps} / {totalSteps}</span>
-        <button onClick={() => setShowExitConfirm(true)} style={{
-          background: "none", border: "none", padding: 8, cursor: "pointer",
-        }}>
-          <X size={20} color={colors.textSecondary} />
-        </button>
-      </div>
-
-      <div style={{ flex: 1, padding: "20px 24px", display: "flex", flexDirection: "column" }}>
-        <div style={{
-          width: "100%", height: 4, background: "#E5E7EB", borderRadius: 2, marginBottom: 32,
-        }}>
-          <div style={{
-            width: "100%", height: 4,
-            background: `linear-gradient(90deg, ${colors.primary}, ${colors.grape})`,
-            borderRadius: 2,
-          }} />
-        </div>
-
-        <h2 style={{ fontSize: 22, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
-          짝꿍과 연결하기 💑
-        </h2>
-        <p style={{ fontSize: 14, color: colors.textSecondary, marginBottom: 32 }}>
-          초대 코드를 공유하거나, 짝꿍의 코드를 입력해주세요
-        </p>
-
-        <div style={{
-          background: colors.primaryLight, borderRadius: 16, padding: "24px 20px",
-          textAlign: "center", marginBottom: 20,
-        }}>
-          <p style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8 }}>나의 초대 코드</p>
-          <div style={{ fontSize: 24, fontWeight: 800, color: colors.primary, letterSpacing: 3, marginBottom: 12 }}>
-            {myInviteCode || "생성 중..."}
-          </div>
-          <button onClick={() => {
-            if (myInviteCode) {
-              navigator.clipboard?.writeText?.(myInviteCode);
-            }
-          }} style={{
-            background: colors.primary, color: "#fff", border: "none",
-            padding: "8px 20px", borderRadius: 8, fontSize: 13, fontWeight: 600, cursor: "pointer",
-            display: "inline-flex", alignItems: "center", gap: 6,
-          }}>
-            <Copy size={14} /> 코드 복사하기
-          </button>
-        </div>
-
-        <div style={{ textAlign: "center", color: colors.textTertiary, fontSize: 13, marginBottom: 20 }}>또는</div>
-
-        <input
-          type="text"
-          placeholder="짝꿍의 초대 코드 입력"
-          value={inviteCode}
-          onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
-          style={{
-            width: "100%", padding: "14px 16px", borderRadius: 12,
-            border: `1.5px solid ${colors.border}`, fontSize: 16, textAlign: "center",
-            letterSpacing: 2, fontWeight: 600, outline: "none", boxSizing: "border-box",
-          }}
-        />
-
-        <div style={{ flex: 1 }} />
-
-        <button onClick={() => onComplete(answers)} style={{
-          width: "100%", padding: "16px", borderRadius: 14,
-          background: `linear-gradient(135deg, ${colors.primary}, ${colors.primaryDark})`,
-          color: "#fff", border: "none", fontSize: 16, fontWeight: 700,
-          cursor: "pointer", marginBottom: 20,
-        }}>
-          함께 시작하기 🍇
-        </button>
-
-        <button onClick={() => onComplete(answers)} style={{
-          width: "100%", padding: "12px", background: "none",
-          border: "none", color: colors.textTertiary, fontSize: 13, cursor: "pointer",
-        }}>
-          나중에 연결할게요
-        </button>
-      </div>
-      </div>
-    </div>
-  );
-}
 
 // ─── Main App ─────────────────────────────────────────────
 export default function MallangApp() {
-  // Firebase Auth 상태
-  const [authUser, setAuthUser] = useState(null);
-  const [authLoading, setAuthLoading] = useState(true);
+  // Auth/Couple Context (단일 데이터 소스)
+  const { authUser, userData: ctxUserData, authLoading } = useAuth();
+  const {
+    grapeBoards: ctxBoards,
+    coupons: ctxCoupons,
+    praises: ctxPraises,
+    chores: ctxChores,
+    shopListings: ctxShopListings,
+    moodHistory: ctxMoodHistory,
+    aiTransformHistory: ctxAiHistory,
+    partnerUid: ctxPartnerUid,
+    partnerProfile: ctxPartnerProfile,
+    partnerSurvey: ctxPartnerSurvey,
+    partnerSurveyCompleted: ctxPartnerSurveyCompleted,
+    streak: ctxStreak,
+    dailyQuestion: ctxDailyQuestion,
+    todayMoodGuess: ctxTodayMoodGuess,
+    activeCoupleId: ctxActiveCoupleId,
+  } = useCouple();
+
   const [loginError, setLoginError] = useState(null);
 
   // 안드로이드 뒤로가기 상태
@@ -759,6 +94,7 @@ export default function MallangApp() {
   const [showMoodPopup, setShowMoodPopup] = useState(false);
   const [moodHistory, setMoodHistory] = useState(() => loadFromStorage("moodHistory", []));
   const moodPopupShownRef = useRef(false);
+  const streakUpdatedRef = useRef(false);
   const [welcomeName, setWelcomeName] = useState("");
   const [welcomePartnerCode, setWelcomePartnerCode] = useState("");
   const [showSkipCodeConfirm, setShowSkipCodeConfirm] = useState(false);
@@ -845,7 +181,7 @@ export default function MallangApp() {
 
   const showToast = (message, type = "success") => {
     setToast({ visible: true, message, type });
-    setTimeout(() => setToast({ ...toast, visible: false }), 2200);
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 2200);
   };
 
   const partnerDisplayName = user.partnerConnected && user.partnerName ? user.partnerName : t("partnerDefault");
@@ -877,191 +213,99 @@ export default function MallangApp() {
   }, [user.name, user.inviteCode, authUser]);
   const reportUnlocked = reportTodayUnlocked; // 포도알 10개 결제 필요
 
-  // Firebase Auth 리스너
+  // AuthContext의 userData 최초 도착 시 레거시 데이터 로딩 + 화면 전환
+  const legacyLoadedRef = useRef(false);
   useEffect(() => {
-    let unsubscribe = () => {};
+    if (!ctxUserData || legacyLoadedRef.current) return;
+    legacyLoadedRef.current = true;
 
-    // 3초 타임아웃 - Firebase 연결 실패해도 앱 진행
-    const timeout = setTimeout(() => {
-      setAuthLoading(false);
-    }, 3000);
-
-    try {
-      unsubscribe = onAuthChange(async (firebaseUser) => {
-        clearTimeout(timeout);
-        if (firebaseUser) {
-          setAuthUser(firebaseUser);
-          // Firebase에서 사용자 데이터 로드
-          try {
-            // 새 스키마 유저 문서 자동 생성 (없으면)
-            const { createUserDocument } = await import("./services/userService");
-            await createUserDocument(firebaseUser);
-
-            const { data } = await getUserData(firebaseUser.uid);
-            if (data) {
-              // 새 스키마 필드 동기화
-              setUser(u => ({
-                ...u,
-                ...(data.user || {}), // 레거시 호환
-                name: data.displayName || (data.user && data.user.name) || u.name,
-                inviteCode: data.inviteCode || u.inviteCode,
-                grapePoints: data.grapePoints !== undefined ? data.grapePoints : (data.user?.grapePoints || u.grapePoints),
-                coupleId: data.activeCoupleId || '',
-                partnerConnected: !!data.activeCoupleId,
-              }));
-              // 레거시 데이터 호환
-              if (data.chores) setChores(data.chores);
-              if (data.praiseLog) setPraiseLog(data.praiseLog);
-              if (data.grapeBoards) setGrapeBoards(data.grapeBoards);
-              if (data.myCoupons) setMyCoupons(data.myCoupons);
-              if (data.shopCoupons) setShopCoupons(data.shopCoupons);
-              if (data.moodHistory) setMoodHistory(data.moodHistory);
-              if (data.conversationHistory) setConversationHistory(data.conversationHistory);
-              if (data.savedSurveyAnswers || data.survey) {
-                setSavedSurveyAnswers(data.savedSurveyAnswers || data.survey || {});
-              }
-              // 닉네임이 이미 있으면 welcome 생략하고 바로 main으로
-              if (data.displayName && data.displayName.trim()) {
-                setScreen("main");
-              }
-            }
-          } catch (e) {
-            console.error("Failed to load user data:", e);
-          }
-        } else {
-          setAuthUser(null);
-        }
-        setAuthLoading(false);
-      });
-    } catch (e) {
-      console.error("Firebase auth error:", e);
-      setAuthLoading(false);
+    // 레거시 데이터 호환 (user doc에 직접 저장된 배열 데이터)
+    if (ctxUserData.chores) setChores(ctxUserData.chores);
+    if (ctxUserData.praiseLog) setPraiseLog(ctxUserData.praiseLog);
+    if (ctxUserData.grapeBoards) setGrapeBoards(ctxUserData.grapeBoards);
+    if (ctxUserData.myCoupons) setMyCoupons(ctxUserData.myCoupons);
+    if (ctxUserData.shopCoupons) setShopCoupons(ctxUserData.shopCoupons);
+    if (ctxUserData.moodHistory) setMoodHistory(ctxUserData.moodHistory);
+    if (ctxUserData.conversationHistory) setConversationHistory(ctxUserData.conversationHistory);
+    if (ctxUserData.savedSurveyAnswers || ctxUserData.survey) {
+      setSavedSurveyAnswers(ctxUserData.savedSurveyAnswers || ctxUserData.survey || {});
     }
+    // 닉네임이 이미 있으면 welcome 생략하고 바로 main으로
+    if (ctxUserData.displayName && ctxUserData.displayName.trim()) {
+      setScreen("main");
+    }
+  }, [ctxUserData]);
 
-    return () => {
-      clearTimeout(timeout);
-      unsubscribe();
-    };
-  }, []);
+  // ─── Context → 로컬 state 동기화 브릿지 ───
+  // (CoupleContext/AuthContext가 단일 데이터 소스, 기존 로컬 state 참조 유지)
 
-  // Firebase 실시간 리스너 (onSnapshot) - syncToFirebase 대체
-  // 유저 문서 실시간 구독
+  // 유저 문서 동기화 (AuthContext → 로컬 user state)
   useEffect(() => {
-    if (!authUser) return;
-    const unsubscribe = subscribeToUser(authUser.uid, (data) => {
-      if (data) {
-        // 서버 데이터로 로컬 상태 동기화 (Server Wins 전략)
-        setUser(u => ({
-          ...u,
-          grapePoints: data.grapePoints !== undefined ? data.grapePoints : u.grapePoints,
-          totalGrapes: data.totalGrapesEarned || u.totalGrapes || 0,
-          name: data.displayName || u.name,
-          inviteCode: data.inviteCode || u.inviteCode,
-          coupleId: data.activeCoupleId || '',
-          partnerConnected: !!data.activeCoupleId,
-        }));
-        if (data.survey && Object.keys(data.survey).length > 0) {
-          setSavedSurveyAnswers(data.survey);
-        }
+    if (ctxUserData) {
+      setUser(u => ({
+        ...u,
+        grapePoints: ctxUserData.grapePoints !== undefined ? ctxUserData.grapePoints : u.grapePoints,
+        totalGrapes: ctxUserData.totalGrapesEarned || u.totalGrapes || 0,
+        name: ctxUserData.displayName || u.name,
+        inviteCode: ctxUserData.inviteCode || u.inviteCode,
+        coupleId: ctxUserData.activeCoupleId || '',
+        partnerConnected: !!ctxUserData.activeCoupleId,
+      }));
+      if (ctxUserData.survey && Object.keys(ctxUserData.survey).length > 0) {
+        setSavedSurveyAnswers(ctxUserData.survey);
       }
-    });
-    return () => unsubscribe();
-  }, [authUser]);
+    }
+  }, [ctxUserData]);
 
-  // 기분 기록 실시간 구독
+  // 파트너 정보 동기화 (CoupleContext → 로컬 user state)
   useEffect(() => {
-    if (!authUser) return;
-    const unsubscribe = subscribeToMoodHistory(authUser.uid, (moods) => {
-      // Firestore 서브컬렉션에 데이터가 있으면 반영, 없으면 레거시 데이터 유지
-      if (moods && moods.length > 0) {
-        setMoodHistory(moods);
-      }
-    });
-    return () => unsubscribe();
-  }, [authUser]);
+    if (ctxPartnerUid && ctxPartnerProfile) {
+      setUser(u => ({
+        ...u,
+        partnerName: ctxPartnerProfile.displayName || '',
+        partnerUid: ctxPartnerUid,
+      }));
+    }
+  }, [ctxPartnerUid, ctxPartnerProfile]);
 
-  // AI 변환 기록 실시간 구독
+  // 파트너 설문 동기화
   useEffect(() => {
-    if (!authUser) return;
-    const unsubscribe = subscribeToAiTransformHistory(authUser.uid, (entries) => {
-      if (entries && entries.length > 0) {
-        setConversationHistory(entries);
-      }
-    });
-    return () => unsubscribe();
-  }, [authUser]);
+    setUser(u => ({
+      ...u,
+      partnerSurvey: ctxPartnerSurvey,
+      partnerSurveyCompleted: ctxPartnerSurveyCompleted,
+    }));
+  }, [ctxPartnerSurvey, ctxPartnerSurveyCompleted]);
 
-  // 짝꿍 성향 데이터 구독
+  // 커플 공유 데이터 동기화 (CoupleContext → 로컬 state)
   useEffect(() => {
-    if (!user.partnerUid) return;
-    const unsubscribe = subscribeToUser(user.partnerUid, (data) => {
-      if (data) {
-        setUser(u => ({
-          ...u,
-          partnerSurvey: data.survey && Object.keys(data.survey).length > 0 ? data.survey : null,
-          partnerSurveyCompleted: !!data.surveyCompleted,
-        }));
-      }
-    });
-    return () => unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user.partnerUid]);
+    if (ctxBoards && ctxBoards.length > 0) setGrapeBoards(ctxBoards);
+  }, [ctxBoards]);
 
-  // 커플 데이터 실시간 구독 (커플 ID 있을 때)
   useEffect(() => {
-    const coupleId = user.coupleId;
-    if (!authUser || !coupleId) return;
+    if (ctxCoupons && ctxCoupons.length > 0) setMyCoupons(ctxCoupons);
+  }, [ctxCoupons]);
 
-    setupCoupleListeners(coupleId, {
-      onCoupleUpdate: (coupleData) => {
-        if (coupleData?.memberProfiles && authUser) {
-          const partnerUid = coupleData.members?.find(m => m !== authUser.uid);
-          if (partnerUid && coupleData.memberProfiles[partnerUid]) {
-            setUser(u => ({
-              ...u,
-              partnerName: coupleData.memberProfiles[partnerUid].displayName || '',
-              partnerUid: partnerUid,
-            }));
-          }
-        }
-      },
-      onGrapeBoardsUpdate: (boards) => {
-        if (boards && boards.length > 0) {
-          setGrapeBoards(boards.map(b => ({ ...b, current: b.progress || b.current || 0 })));
-        }
-      },
-      onCouponsUpdate: (coupons) => {
-        if (coupons && coupons.length > 0) {
-          const mapped = coupons.map(c => ({
-            ...c,
-            from: c.fromUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
-            to: c.toUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
-          }));
-          setMyCoupons(mapped);
-        }
-      },
-      onPraisesUpdate: (praises) => {
-        if (praises && praises.length > 0) {
-          setPraiseLog(praises.map(p => ({
-            ...p,
-            from: p.fromUid === authUser?.uid ? (user.name || "나") : partnerDisplayName,
-            date: p.createdAt ? new Date(p.createdAt).toLocaleDateString("ko-KR", { month: "long", day: "numeric" }) : p.date,
-          })));
-        }
-      },
-      onChoresUpdate: (choreList) => {
-        if (choreList && choreList.length > 0) setChores(choreList);
-      },
-      onShopListingsUpdate: (listings) => {
-        if (listings && listings.length > 0) setShopCoupons(listings);
-      },
-    });
+  useEffect(() => {
+    if (ctxPraises && ctxPraises.length > 0) setPraiseLog(ctxPraises);
+  }, [ctxPraises]);
 
-    return () => teardownCoupleListeners(coupleId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authUser, user.coupleId]);
+  useEffect(() => {
+    if (ctxChores && ctxChores.length > 0) setChores(ctxChores);
+  }, [ctxChores]);
 
-  // 개인 기분/AI변환 기록은 CoupleContext에서 구독 중 (중복 방지)
+  useEffect(() => {
+    if (ctxShopListings && ctxShopListings.length > 0) setShopCoupons(ctxShopListings);
+  }, [ctxShopListings]);
+
+  // 개인 데이터 동기화 (CoupleContext → 로컬 state)
+  useEffect(() => {
+    if (ctxMoodHistory && ctxMoodHistory.length > 0) setMoodHistory(ctxMoodHistory);
+  }, [ctxMoodHistory]);
+
+  useEffect(() => {
+    if (ctxAiHistory && ctxAiHistory.length > 0) setConversationHistory(ctxAiHistory);
+  }, [ctxAiHistory]);
 
   // 로컬 상태 변경 시 Firebase에 저장 (onSnapshot이 처리하지 않는 레거시 데이터용)
   const syncToFirebase = useCallback(async () => {
@@ -1170,6 +414,32 @@ export default function MallangApp() {
     }, 1500);
     return () => clearTimeout(timer);
   }, [screen, moodHistory]);
+
+  // 스트릭 갱신 (앱 진입 시 1회)
+  useEffect(() => {
+    if (!ctxActiveCoupleId || streakUpdatedRef.current) return;
+    streakUpdatedRef.current = true;
+    updateStreak(ctxActiveCoupleId);
+  }, [ctxActiveCoupleId]);
+
+  // 기분 맞히기 결과 공개 시 포도알 적립
+  const moodGuessRewardedRef = useRef(false);
+  useEffect(() => {
+    if (!ctxTodayMoodGuess || ctxTodayMoodGuess.isCorrect === null || ctxTodayMoodGuess.isCorrect === undefined) return;
+    if (moodGuessRewardedRef.current) return;
+    if (ctxTodayMoodGuess.guesserUid !== authUser?.uid) return;
+    moodGuessRewardedRef.current = true;
+    const reward = ctxTodayMoodGuess.isCorrect ? 3 : 1;
+    earnGrapes(authUser.uid, ctxActiveCoupleId, reward, 'mood_guess_reward');
+    showToast(ctxTodayMoodGuess.isCorrect ? "정답! 🎉 🍇 +3 포도알" : "아쉽지만 참여 보상! 🍇 +1 포도알");
+  }, [ctxTodayMoodGuess, authUser, ctxActiveCoupleId]);
+
+  // 탭 전환 시 Analytics
+  useEffect(() => {
+    if (screen === "main") {
+      trackScreenView(tab);
+    }
+  }, [tab, screen]);
 
   // localStorage 저장 (데이터 변경 시)
   useEffect(() => {
@@ -1462,6 +732,7 @@ JSON 형식:
     }
     setHearts(h => h + 1);
     showToast(`${partnerDisplayName}님에게 칭찬을 보냈어요! 💜 하트 +1`);
+    trackFeatureUse('praise_send');
     setPraiseText("");
   };
 
@@ -1877,7 +1148,8 @@ JSON 형식:
             </div>
           )}
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <StreakBadge current={ctxStreak?.current} longest={ctxStreak?.longest} />
           <button onClick={() => setShowSettings(true)} style={{
             width: 38, height: 38, borderRadius: 12, background: "#fff",
             border: `1px solid ${colors.border}`, display: "flex", alignItems: "center",
@@ -1887,6 +1159,53 @@ JSON 형식:
           </button>
         </div>
       </div>
+
+      {/* Daily Question */}
+      {ctxActiveCoupleId && ctxDailyQuestion && (
+        <DailyQuestionCard
+          question={ctxDailyQuestion}
+          myAnswer={ctxDailyQuestion.answers?.[authUser?.uid]}
+          partnerAnswer={ctxDailyQuestion.answers?.[ctxPartnerUid]}
+          myName={user.name}
+          partnerName={partnerDisplayName}
+          onSubmit={async (text) => {
+            const today = getLocalToday();
+            const { error } = await submitAnswer(ctxActiveCoupleId, today, authUser.uid, text);
+            if (error) {
+              showToast("답변 저장에 실패했어요");
+              return;
+            }
+            trackFeatureUse('daily_question_answer');
+            // 양쪽 모두 답변 완료 시 포도알 적립
+            const updatedAnswers = { ...ctxDailyQuestion.answers, [authUser.uid]: { text } };
+            const answerCount = Object.keys(updatedAnswers).length;
+            if (answerCount >= 2) {
+              await earnGrapes(authUser.uid, ctxActiveCoupleId, 2, 'daily_question');
+              showToast("커플 질문 완료! 🍇 +2 포도알");
+            } else {
+              showToast("답변을 저장했어요! 💜");
+            }
+          }}
+        />
+      )}
+
+      {/* Mood Guess */}
+      {ctxActiveCoupleId && ctxPartnerUid && (
+        <MoodGuessCard
+          guess={ctxTodayMoodGuess}
+          partnerName={partnerDisplayName}
+          onSubmit={async (guessedMood) => {
+            const today = getLocalToday();
+            const { error } = await submitGuess(ctxActiveCoupleId, today, authUser.uid, ctxPartnerUid, guessedMood);
+            if (error) {
+              showToast("추측 저장에 실패했어요");
+              return;
+            }
+            trackFeatureUse('mood_guess');
+            showToast("추측 완료! 상대방이 기분을 기록하면 결과를 알 수 있어요 🎯");
+          }}
+        />
+      )}
 
       {/* Grape Boards Summary - compact horizontal scroll */}
       <div style={{ marginBottom: 16 }}>
@@ -2980,17 +2299,19 @@ JSON 형식:
                       const { error } = await updateGrapeBoardProgress(coupleId, board.id, authUser.uid, board.perSuccess);
                       if (error) { showToast(error, "error"); return; }
                     } else {
+                      if (authUser) {
+                        const { error } = await earnGrapes(authUser.uid, null, board.perSuccess, 'grape_board_progress', { boardId: board.id });
+                        if (error) { showToast(error, "error"); return; }
+                      }
                       setGrapeBoards(boards => boards.map(b =>
                         b.id === board.id ? { ...b, current: newCurrent } : b
                       ));
-                      if (authUser) {
-                        const { error } = await earnGrapes(authUser.uid, null, board.perSuccess, 'grape_board_progress', { boardId: board.id });
-                        if (error) showToast(error, "error");
-                      }
                     }
                     if (willComplete) {
+                      const title = board.title;
+                      trackFeatureUse('grape_board_complete');
                       setTimeout(() => {
-                        setRewardBoardTitle(board.title);
+                        setRewardBoardTitle(title);
                         setShowConfetti(true);
                         setShowRewardModal(true);
                         setTimeout(() => setShowConfetti(false), 3500);
@@ -6180,6 +5501,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
                 }
                 setConfirmSendCoupon(null);
                 showToast(`${partnerDisplayName}님에게 쿠폰을 보냈어요! 🎫`);
+                trackFeatureUse('coupon_send');
               }} style={{
                 flex: 1, padding: "12px", borderRadius: 12,
                 background: `linear-gradient(135deg, ${colors.primary}, ${colors.primaryDark})`,

@@ -172,6 +172,32 @@ service cloud.firestore {
         );
         allow update, delete: if false;
       }
+
+      // 오늘의 커플 질문
+      match /dailyQuestions/{dateId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create, update: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow delete: if false;
+      }
+
+      // 기분 맞히기
+      match /moodGuesses/{guessId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create, update: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow delete: if false;
+      }
     }
 
     // ============================================
