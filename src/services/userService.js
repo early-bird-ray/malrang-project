@@ -5,7 +5,6 @@ import {
   getDoc,
   collection,
   addDoc,
-  onSnapshot,
 } from './firebase';
 
 // 초대 코드 생성 (MALL-XXXX 형식)
@@ -112,17 +111,6 @@ export const updateUserData = async (uid, data) => {
   }
 };
 
-// 유저 실시간 구독
-export const subscribeToUser = (uid, callback) => {
-  if (!db) return () => {};
-  const userRef = doc(db, 'users', uid);
-  return onSnapshot(userRef, (snap) => {
-    if (snap.exists()) {
-      callback(snap.data());
-    }
-  });
-};
-
 // 설문 답변 저장
 export const saveSurveyAnswers = async (uid, answers) => {
   return updateUserData(uid, {
@@ -131,35 +119,21 @@ export const saveSurveyAnswers = async (uid, answers) => {
   });
 };
 
-// 기분 기록 저장 (개인 서브컬렉션)
+// 기분 기록 저장 (개인 서브컬렉션, 날짜별 upsert)
 export const saveMoodEntry = async (uid, moodData) => {
   if (!db) return { error: 'Firebase 미초기화' };
 
   try {
-    const moodRef = collection(db, 'users', uid, 'moodHistory');
-    const docRef = await addDoc(moodRef, {
+    const moodDocRef = doc(db, 'users', uid, 'moodHistory', moodData.date);
+    await setDoc(moodDocRef, {
       ...moodData,
       createdAt: new Date().toISOString(),
     });
-    return { id: docRef.id, error: null };
+    return { id: moodData.date, error: null };
   } catch (error) {
     console.error('Save mood entry error:', error);
     return { id: null, error: error.message };
   }
-};
-
-// 기분 기록 구독
-export const subscribeToMoodHistory = (uid, callback) => {
-  if (!db) return () => {};
-  const moodRef = collection(db, 'users', uid, 'moodHistory');
-  return onSnapshot(moodRef, (snapshot) => {
-    const moods = [];
-    snapshot.forEach((doc) => {
-      moods.push({ id: doc.id, ...doc.data() });
-    });
-    moods.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-    callback(moods);
-  });
 };
 
 // AI 변환 기록 저장 (개인 서브컬렉션)
@@ -178,20 +152,6 @@ export const saveAiTransformEntry = async (uid, coupleId, entry) => {
     console.error('Save AI transform entry error:', error);
     return { id: null, error: error.message };
   }
-};
-
-// AI 변환 기록 구독
-export const subscribeToAiTransformHistory = (uid, callback) => {
-  if (!db) return () => {};
-  const historyRef = collection(db, 'users', uid, 'aiTransformHistory');
-  return onSnapshot(historyRef, (snapshot) => {
-    const entries = [];
-    snapshot.forEach((doc) => {
-      entries.push({ id: doc.id, ...doc.data() });
-    });
-    entries.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
-    callback(entries);
-  });
 };
 
 // 고유 초대 코드 생성 (중복 체크 포함)

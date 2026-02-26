@@ -12,7 +12,6 @@ import { earnGrapes, createGrapeBoard, updateGrapeBoard, updateGrapeBoardProgres
 import { earnHearts, spendHearts } from "./services/heartService";
 import { submitAnswer } from "./services/dailyQuestionService";
 import { updateStreak } from "./services/streakService";
-import { submitGuess } from "./services/moodGuessService";
 import { trackScreenView, trackFeatureUse } from "./services/analyticsService";
 import { saveAiTransformEntry, updateUserData, generateUniqueInviteCode, registerInviteCode, saveMoodEntry } from "./services/userService";
 import { createCoupon, sendCoupon, useCoupon as markCouponUsed, undoUseCoupon, updateCoupon, deleteCoupon, createShopListing, deleteShopListing } from "./services/couponService";
@@ -31,7 +30,7 @@ import GrapeCluster from "./components/GrapeCluster";
 import OnboardingScreen from "./components/OnboardingScreen";
 import DailyQuestionCard from "./components/DailyQuestionCard";
 import StreakBadge from "./components/StreakBadge";
-import MoodGuessCard from "./components/MoodGuessCard";
+import CoupleMoodCard from "./components/CoupleMoodCard";
 
 
 // ─── Main App ─────────────────────────────────────────────
@@ -52,7 +51,7 @@ export default function MallangApp() {
     partnerSurveyCompleted: ctxPartnerSurveyCompleted,
     streak: ctxStreak,
     dailyQuestion: ctxDailyQuestion,
-    todayMoodGuess: ctxTodayMoodGuess,
+    partnerMoodHistory: ctxPartnerMoodHistory,
     activeCoupleId: ctxActiveCoupleId,
   } = useCouple();
 
@@ -425,16 +424,7 @@ export default function MallangApp() {
     updateStreak(ctxActiveCoupleId);
   }, [ctxActiveCoupleId]);
 
-  // 기분 맞히기 결과 공개 시 하트 적립
-  const moodGuessRewardedRef = useRef(false);
-  useEffect(() => {
-    if (!ctxTodayMoodGuess || ctxTodayMoodGuess.isCorrect === null || ctxTodayMoodGuess.isCorrect === undefined) return;
-    if (moodGuessRewardedRef.current) return;
-    if (ctxTodayMoodGuess.guesserUid !== authUser?.uid) return;
-    moodGuessRewardedRef.current = true;
-    earnHearts(authUser.uid, ctxActiveCoupleId, 1, 'mood_guess_reward');
-    showToast(ctxTodayMoodGuess.isCorrect ? "정답! 🎉 ❤️ +1 하트" : "아쉽지만 참여 보상! ❤️ +1 하트");
-  }, [ctxTodayMoodGuess, authUser, ctxActiveCoupleId]);
+
 
   // 탭 전환 시 Analytics
   useEffect(() => {
@@ -1160,6 +1150,29 @@ JSON 형식:
         </div>
       </div>
 
+      {/* 미연결 시 커플 기능 유도 카드 */}
+      {!user.partnerConnected && (
+        <div style={{
+          background: `linear-gradient(135deg, ${colors.primaryLight}, #EDE9FE)`,
+          borderRadius: 16, padding: "20px 18px", marginBottom: 16,
+          border: `1px solid ${colors.primary}22`,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+            <span style={{ fontSize: 28 }}>💑</span>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>짝꿍과 함께 즐겨보세요!</h3>
+          </div>
+          <p style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.6, marginBottom: 14 }}>
+            짝꿍과 연결하면 커플 질문, 오늘의 기분, 칭찬 보내기 등<br/>
+            다양한 커플 기능을 함께 즐길 수 있어요.
+          </p>
+          <button onClick={() => setShowSettings(true)} style={{
+            padding: "10px 20px", borderRadius: 10,
+            background: `linear-gradient(135deg, ${colors.primary}, ${colors.primaryDark})`,
+            color: "#fff", border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer",
+          }}>짝꿍코드 등록하러 가기 →</button>
+        </div>
+      )}
+
       {/* Daily Question */}
       {ctxActiveCoupleId && ctxDailyQuestion && (
         <DailyQuestionCard
@@ -1189,22 +1202,22 @@ JSON 형식:
         />
       )}
 
-      {/* Mood Guess */}
+      {/* 커플 기분 */}
       {ctxActiveCoupleId && ctxPartnerUid && (
-        <MoodGuessCard
-          guess={ctxTodayMoodGuess}
-          partnerName={partnerDisplayName}
-          onSubmit={async (guessedMood) => {
-            const today = getLocalToday();
-            const { error } = await submitGuess(ctxActiveCoupleId, today, authUser.uid, ctxPartnerUid, guessedMood);
-            if (error) {
-              showToast("추측 저장에 실패했어요");
-              return;
-            }
-            trackFeatureUse('mood_guess');
-            showToast("추측 완료! 상대방이 기분을 기록하면 결과를 알 수 있어요 🎯");
-          }}
-        />
+        (() => {
+          const today = getLocalToday();
+          const myTodayMood = moodHistory.find(m => m.date === today);
+          const partnerTodayMood = ctxPartnerMoodHistory.find(m => m.date === today);
+          return (
+            <CoupleMoodCard
+              myMood={myTodayMood}
+              partnerMood={partnerTodayMood}
+              myName={user.name || '나'}
+              partnerName={partnerDisplayName}
+              onRecordMood={() => setShowMoodPopup(true)}
+            />
+          );
+        })()
       )}
 
       {/* Grape Boards Summary - compact horizontal scroll */}
@@ -2839,6 +2852,11 @@ JSON 형식:
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
             <button onClick={() => {
+              if (!user.partnerConnected) {
+                setPartnerRequiredAction("coupon");
+                setShowPartnerRequiredPopup(true);
+                return;
+              }
               setCouponCreateMode("shop");
               setEditCouponId(null);
               setNewCoupon({ title: "", desc: "", expiry: "" });
@@ -3155,6 +3173,29 @@ JSON 형식:
         <h2 style={{ fontSize: 20, fontWeight: 800, color: colors.text }}>📊 분석</h2>
         <p style={{ fontSize: 13, color: colors.textSecondary, marginTop: 4 }}>우리의 관계를 더 깊이 이해해보세요</p>
       </div>
+
+      {!user.partnerConnected ? (
+        <div style={{
+          background: "#fff", borderRadius: 20, padding: "48px 24px",
+          textAlign: "center", border: `1px solid ${colors.border}`,
+          boxShadow: colors.shadow,
+        }}>
+          <div style={{ fontSize: 56, marginBottom: 16 }}>🔗</div>
+          <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 8 }}>
+            짝꿍과 연결해주세요
+          </h3>
+          <p style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.6, marginBottom: 24 }}>
+            분석 기능은 짝꿍과 연결한 뒤에 사용할 수 있어요.<br/>
+            함께 대화하고 활동하면 관계 분석 리포트가 만들어져요!
+          </p>
+          <button onClick={() => setShowSettings(true)} style={{
+            padding: "13px 28px", borderRadius: 12,
+            background: `linear-gradient(135deg, ${colors.primary}, ${colors.primaryDark})`,
+            color: "#fff", border: "none", fontSize: 14, fontWeight: 700, cursor: "pointer",
+          }}>짝꿍코드 등록하기</button>
+        </div>
+      ) : (
+      <>
 
       {/* Sub-tabs - 2x2 Grid */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 16 }}>
@@ -4625,6 +4666,8 @@ A는 상황을 작성한 사람, B는 상대방이다.
           )}
         </div>
       )}
+      </>
+      )}
     </div>
   );
 
@@ -5664,7 +5707,9 @@ A는 상황을 작성한 사람, B는 상대방이다.
             <p style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.6, marginBottom: 20 }}>
               {partnerRequiredAction === "praise"
                 ? "칭찬을 보내려면 먼저 짝꿍과 연결해야 해요."
-                : "쿠폰을 보내려면 먼저 짝꿍과 연결해야 해요."}
+                : partnerRequiredAction === "coupon"
+                ? "쿠폰을 보내려면 먼저 짝꿍과 연결해야 해요."
+                : "이 기능은 짝꿍과 연결해야 사용할 수 있어요."}
             </p>
             <div style={{ display: "flex", gap: 8 }}>
               <button onClick={() => setShowPartnerRequiredPopup(false)} style={{

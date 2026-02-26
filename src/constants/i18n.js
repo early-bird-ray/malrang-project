@@ -6,7 +6,7 @@ export const i18n = {
   splashSub:       { ko: "매일 자라는 우리 사이", en: "Growing together every day", zh: "每天一起成长", ja: "毎日育つふたりの距離" },
   welcomeSub1:     { ko: "함께 쌓아가는 하루하루", en: "Building each day together", zh: "一起积累每一天", ja: "ふたりで積み重ねる毎日" },
   welcomeSub2:     { ko: "말랑말랑한 대화의 시작", en: "The start of a soft conversation", zh: "柔软对话的开始", ja: "やわらかい会話のはじまり" },
-  welcomeDesc:     { ko: "커플 질문, 기분 맞히기, 스트릭으로 매일 함께 성장해요", en: "Grow together daily with couple questions, mood guessing, and streaks", zh: "通过情侣问题、猜心情和连续打卡，每天一起成长", ja: "カップル質問・気分当て・ストリークで毎日一緒に成長しよう" },
+  welcomeDesc:     { ko: "커플 질문, 오늘의 기분, 스트릭으로 매일 함께 성장해요", en: "Grow together daily with couple questions, mood sharing, and streaks", zh: "通过情侣问题、今日心情和连续打卡，每天一起成长", ja: "カップル質問・今日の気分・ストリークで毎日一緒に成長しよう" },
   myName:          { ko: "내 이름 (닉네임)", en: "My Name (Nickname)", zh: "我的名字（昵称）", ja: "名前（ニックネーム）" },
   namePlaceholder: { ko: "예: 말랑", en: "e.g. Mallang", zh: "例：软软", ja: "例：まるまる" },
   partnerCode:     { ko: "짝꿍의 초대 코드", en: "Partner's Invite Code", zh: "伴侣的邀请码", ja: "パートナーの招待コード" },

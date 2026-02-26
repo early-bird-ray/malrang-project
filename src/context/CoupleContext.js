@@ -8,7 +8,6 @@ import {
   subscribeToUser,
 } from '../services/listenerService';
 import { subscribeToDailyQuestion, getTodayQuestion } from '../services/dailyQuestionService';
-import { subscribeTodayGuess, revealGuess } from '../services/moodGuessService';
 
 const CoupleContext = createContext(null);
 
@@ -36,8 +35,8 @@ export function CoupleProvider({ children }) {
   // 오늘의 커플 질문
   const [dailyQuestion, setDailyQuestion] = useState(null);
 
-  // 기분 맞히기
-  const [todayMoodGuess, setTodayMoodGuess] = useState(null);
+  // 파트너 기분 기록
+  const [partnerMoodHistory, setPartnerMoodHistory] = useState([]);
 
   // 파트너 정보
   const getPartnerUid = useCallback(() => {
@@ -117,11 +116,10 @@ export function CoupleProvider({ children }) {
     };
   }, [uid]);
 
-  // 오늘의 커플 질문 + 기분 맞히기 리스너
+  // 오늘의 커플 질문 리스너
   useEffect(() => {
     if (!activeCoupleId) {
       setDailyQuestion(null);
-      setTodayMoodGuess(null);
       return;
     }
 
@@ -132,28 +130,25 @@ export function CoupleProvider({ children }) {
     getTodayQuestion(activeCoupleId, today);
 
     const unsubQuestion = subscribeToDailyQuestion(activeCoupleId, today, setDailyQuestion);
-    const unsubGuess = subscribeTodayGuess(activeCoupleId, today, setTodayMoodGuess);
 
     return () => {
       unsubQuestion();
-      unsubGuess();
     };
   }, [activeCoupleId]);
 
-  // 기분 기록 시 자동 reveal (상대가 기분 기록하면 맞히기 결과 공개)
+  // 파트너 기분 기록 리스너
   useEffect(() => {
-    if (!activeCoupleId || !todayMoodGuess || !moodHistory.length) return;
-    if (todayMoodGuess.actualMood !== null) return; // 이미 공개됨
-
-    const now = new Date();
-    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-    // targetUid의 오늘 기분 기록 확인
-    const targetMood = moodHistory.find(m => m.date === today);
-    if (targetMood && uid === todayMoodGuess.targetUid) {
-      revealGuess(activeCoupleId, today, targetMood.mood);
+    if (!partnerUid) {
+      setPartnerMoodHistory([]);
+      return;
     }
-  }, [moodHistory, todayMoodGuess, activeCoupleId, uid]);
+
+    const unsubPartnerMood = subscribeToMoodHistory(partnerUid, setPartnerMoodHistory);
+
+    return () => {
+      unsubPartnerMood();
+    };
+  }, [partnerUid]);
 
   // 파트너 유저 문서 구독 (설문 데이터용)
   useEffect(() => {
@@ -240,8 +235,8 @@ export function CoupleProvider({ children }) {
     // 오늘의 커플 질문
     dailyQuestion,
 
-    // 기분 맞히기
-    todayMoodGuess,
+    // 파트너 기분 기록
+    partnerMoodHistory,
   };
 
   return (
