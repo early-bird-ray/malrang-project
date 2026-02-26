@@ -171,10 +171,7 @@ export const updateGrapeBoardProgress = async (coupleId, boardId, uid, increment
       return { progress: newProgress, completed, goal: boardData.goal };
     });
 
-    // 완료 시 보너스 포도 적립
-    if (result.completed) {
-      await earnGrapes(uid, coupleId, 5, 'grape_board_complete', { boardId });
-    }
+    // 완료 시 보너스: 하트 보상은 App.js의 reward modal에서 사용자가 직접 설정
 
     return { data: result, error: null };
   } catch (error) {

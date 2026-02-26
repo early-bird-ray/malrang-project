@@ -8,7 +8,8 @@ import {
   Trash2, LogOut
 } from "lucide-react";
 import { signInWithGoogle, logOut, saveUserData } from "./firebase";
-import { earnGrapes, spendGrapes, createGrapeBoard, updateGrapeBoard, updateGrapeBoardProgress, deleteGrapeBoard } from "./services/grapeService";
+import { earnGrapes, createGrapeBoard, updateGrapeBoard, updateGrapeBoardProgress, deleteGrapeBoard } from "./services/grapeService";
+import { earnHearts, spendHearts } from "./services/heartService";
 import { submitAnswer } from "./services/dailyQuestionService";
 import { updateStreak } from "./services/streakService";
 import { submitGuess } from "./services/moodGuessService";
@@ -149,6 +150,7 @@ export default function MallangApp() {
   const [myCoupons, setMyCoupons] = useState(() => loadFromStorage("myCoupons", []));
   const [showRewardModal, setShowRewardModal] = useState(false);
   const [rewardBoardTitle, setRewardBoardTitle] = useState("");
+  const [rewardHeartAmount, setRewardHeartAmount] = useState(3);
   const [showConfetti, setShowConfetti] = useState(false);
   const [showCouponCreate, setShowCouponCreate] = useState(false);
   const [newCoupon, setNewCoupon] = useState({ title: "", desc: "", expiry: "" });
@@ -169,7 +171,7 @@ export default function MallangApp() {
   const [voiceResult, setVoiceResult] = useState(null); // "전체" | "사용" | "미사용"
   const [editCouponId, setEditCouponId] = useState(null);
   const [couponViewTab, setCouponViewTab] = useState("sent"); // "sent" | "received"
-  const [hearts, setHearts] = useState(() => loadFromStorage("hearts", 0));
+  // hearts는 이제 Firestore의 user.heartPoints로 관리 (로컬 state 제거됨)
   const [confirmDeleteBoard, setConfirmDeleteBoard] = useState(null);
   const [aiWeeklyTip, setAiWeeklyTip] = useState(null);
   const [aiReportInsight, setAiReportInsight] = useState(null);
@@ -246,6 +248,7 @@ export default function MallangApp() {
         ...u,
         grapePoints: ctxUserData.grapePoints !== undefined ? ctxUserData.grapePoints : u.grapePoints,
         totalGrapes: ctxUserData.totalGrapesEarned || u.totalGrapes || 0,
+        heartPoints: ctxUserData.heartPoints !== undefined ? ctxUserData.heartPoints : (u.heartPoints || 0),
         name: ctxUserData.displayName || u.name,
         inviteCode: ctxUserData.inviteCode || u.inviteCode,
         coupleId: ctxUserData.activeCoupleId || '',
@@ -469,10 +472,6 @@ export default function MallangApp() {
   useEffect(() => {
     localStorage.setItem("mallang_shopCoupons", JSON.stringify(shopCoupons));
   }, [shopCoupons]);
-
-  useEffect(() => {
-    localStorage.setItem("mallang_hearts", JSON.stringify(hearts));
-  }, [hearts]);
 
   useEffect(() => {
     localStorage.setItem("mallang_moodHistory", JSON.stringify(moodHistory));
@@ -730,7 +729,9 @@ JSON 형식:
       };
       setPraiseLog(prev => [newPraise, ...prev]);
     }
-    setHearts(h => h + 1);
+    if (authUser) {
+      earnHearts(authUser.uid, user.coupleId || null, 1, 'praise_send');
+    }
     showToast(`${partnerDisplayName}님에게 칭찬을 보냈어요! 💜 하트 +1`);
     trackFeatureUse('praise_send');
     setPraiseText("");
@@ -2884,15 +2885,15 @@ JSON 형식:
         <div style={{ padding: "16px 0 20px" }}>
           <h2 style={{ fontSize: 20, fontWeight: 800, color: colors.text }}>🎁 선물 상점</h2>
           <p style={{ fontSize: 13, color: colors.textSecondary, marginTop: 4 }}>
-            크레딧으로 기프티콘을, 포도알로 커플 쿠폰을 교환하세요
+            크레딧으로 기프티콘을, 하트로 커플 쿠폰을 교환하세요
           </p>
           <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
             <div style={{
               display: "inline-flex", alignItems: "center", gap: 4,
-              background: colors.grapeLight, borderRadius: 8, padding: "6px 12px",
-              fontSize: 13, fontWeight: 700, color: colors.grape,
+              background: colors.heartLight, borderRadius: 8, padding: "6px 12px",
+              fontSize: 13, fontWeight: 700, color: colors.heart,
             }}>
-              🍇 {user.grapePoints} 포도알 보유 중
+              ❤️ {user.heartPoints || 0} 하트 보유 중
             </div>
             <div style={{
               display: "inline-flex", alignItems: "center", gap: 4,
@@ -2947,10 +2948,10 @@ JSON 형식:
             {/* 상대방이 등록한 포도알 상점 쿠폰 */}
             {shopCoupons.filter(sc => sc.registeredBy !== user.name).length > 0 && (
               <>
-                <h4 style={{ fontSize: 13, fontWeight: 700, color: colors.text, marginBottom: 10 }}>🍇 {partnerDisplayName}님이 등록한 쿠폰</h4>
+                <h4 style={{ fontSize: 13, fontWeight: 700, color: colors.text, marginBottom: 10 }}>❤️ {partnerDisplayName}님이 등록한 쿠폰</h4>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   {shopCoupons.filter(sc => sc.registeredBy !== user.name).map(sc => {
-                    const canBuy = user.grapePoints >= sc.grapes;
+                    const canBuy = (user.heartPoints || 0) >= (sc.hearts || sc.grapes);
                     return (
                       <div key={sc.id} onClick={() => setSelectedShopCoupon(sc)} style={{
                         background: "#fff", borderRadius: 16, padding: "16px 12px",
@@ -2959,7 +2960,7 @@ JSON 형식:
                       }}>
                         <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}><CouponIcon size={28} /></div>
                         <div style={{ fontSize: 13, fontWeight: 600, color: colors.text, marginBottom: 4 }}>{sc.title}</div>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: canBuy ? colors.grape : colors.textTertiary }}>🍇 {sc.grapes}</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: canBuy ? colors.heart : colors.textTertiary }}>❤️ {sc.hearts || sc.grapes}</div>
                       </div>
                     );
                   })}
@@ -3007,7 +3008,7 @@ JSON 형식:
                 </h4>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                   {shopCoupons.filter(sc => sc.registeredBy !== user.name).map(sc => {
-                    const canBuy = user.grapePoints >= sc.grapes;
+                    const canBuy = (user.heartPoints || 0) >= (sc.hearts || sc.grapes);
                     return (
                       <div key={sc.id} onClick={() => setSelectedShopCoupon(sc)} style={{
                         background: "#fff", borderRadius: 16, padding: "16px 12px",
@@ -3016,7 +3017,7 @@ JSON 형식:
                       }}>
                         <div style={{ display: "flex", justifyContent: "center", marginBottom: 6 }}><CouponIcon size={28} /></div>
                         <div style={{ fontSize: 13, fontWeight: 600, color: colors.text, marginBottom: 4 }}>{sc.title}</div>
-                        <div style={{ fontSize: 12, fontWeight: 700, color: canBuy ? colors.grape : colors.textTertiary }}>🍇 {sc.grapes}</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, color: canBuy ? colors.heart : colors.textTertiary }}>❤️ {sc.hearts || sc.grapes}</div>
                       </div>
                     );
                   })}
@@ -3028,7 +3029,8 @@ JSON 형식:
 
         {selectedShopCoupon && (() => {
           const sc = selectedShopCoupon;
-          const canBuy = user.grapePoints >= sc.grapes;
+          const heartCost = sc.hearts || sc.grapes;
+          const canBuy = (user.heartPoints || 0) >= heartCost;
           const daysLeft = Math.max(0, Math.ceil((new Date(sc.expiry) - new Date()) / 86400000));
           return (
             <div style={{
@@ -3046,9 +3048,9 @@ JSON 형식:
                 <p style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 4 }}>{sc.desc}</p>
                 <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 16, marginTop: 12 }}>
                   <span style={{
-                    fontSize: 12, fontWeight: 700, color: colors.grape,
-                    background: colors.grapeLight, padding: "4px 10px", borderRadius: 8,
-                  }}>🍇 {sc.grapes}알</span>
+                    fontSize: 12, fontWeight: 700, color: colors.heart,
+                    background: colors.heartLight, padding: "4px 10px", borderRadius: 8,
+                  }}>❤️ {heartCost}하트</span>
                   <span style={{
                     fontSize: 12, fontWeight: 600, color: daysLeft <= 7 ? colors.rose : colors.textTertiary,
                     background: daysLeft <= 7 ? colors.roseLight : "#F3F4F6",
@@ -3057,9 +3059,9 @@ JSON 형식:
                 </div>
                 <div style={{ marginBottom: 16 }}/>
                 <button onClick={async () => {
-                  if (!canBuy) { showToast("포도알이 부족해요 🍇"); return; }
+                  if (!canBuy) { showToast("하트가 부족해요 ❤️"); return; }
                   if (authUser) {
-                    const { error } = await spendGrapes(authUser.uid, user.coupleId || null, sc.grapes, 'coupon_purchase', { couponTitle: sc.title });
+                    const { error } = await spendHearts(authUser.uid, user.coupleId || null, heartCost, 'coupon_purchase', { couponTitle: sc.title });
                     if (error) { showToast(error); return; }
                   }
                   setMyCoupons(prev => [...prev, {
@@ -3070,12 +3072,12 @@ JSON 형식:
                   showToast(`${sc.title}을(를) 구매했어요! 🎉`);
                 }} style={{
                   width: "100%", padding: "14px", borderRadius: 12,
-                  background: canBuy ? `linear-gradient(135deg, ${colors.grape}, ${colors.primary})` : "#E5E7EB",
+                  background: canBuy ? `linear-gradient(135deg, ${colors.heart}, ${colors.heartDark})` : "#E5E7EB",
                   color: canBuy ? "#fff" : "#9CA3AF",
                   border: "none", fontSize: 15, fontWeight: 700,
                   cursor: canBuy ? "pointer" : "default", marginBottom: 8,
                 }}>
-                  {canBuy ? `구매하기 🍇 -${sc.grapes}` : "포도알 부족"}
+                  {canBuy ? `구매하기 ❤️ -${heartCost}` : "하트 부족"}
                 </button>
                 <button onClick={() => setSelectedShopCoupon(null)} style={{
                   width: "100%", padding: "10px", background: "none",
@@ -3089,9 +3091,9 @@ JSON 형식:
         {/* Gift Confirm Modal */}
         {selectedGift && (() => {
           const isGifticon = selectedGift.category === "기프티콘";
-          const cost = isGifticon ? selectedGift.credits : selectedGift.grapes;
-          const currencyLabel = isGifticon ? "크레딧" : "포도알";
-          const currencyIcon = isGifticon ? "💳" : "🍇";
+          const cost = isGifticon ? selectedGift.credits : (selectedGift.hearts || selectedGift.grapes);
+          const currencyLabel = isGifticon ? "크레딧" : "하트";
+          const currencyIcon = isGifticon ? "💳" : "❤️";
           return (
           <div style={{
             position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
@@ -3113,7 +3115,8 @@ JSON 형식:
                   setUser(u => ({ ...u, mallangCredits: u.mallangCredits - selectedGift.credits }));
                 } else {
                   if (authUser) {
-                    const { error } = await spendGrapes(authUser.uid, user.coupleId || null, selectedGift.grapes, 'gift_purchase', { giftName: selectedGift.name });
+                    const giftHeartCost = selectedGift.hearts || selectedGift.grapes;
+                    const { error } = await spendHearts(authUser.uid, user.coupleId || null, giftHeartCost, 'gift_purchase', { giftName: selectedGift.name });
                     if (error) { showToast(error); return; }
                   }
                 }
@@ -3123,7 +3126,7 @@ JSON 형식:
                 width: "100%", padding: "14px", borderRadius: 12,
                 background: isGifticon
                   ? `linear-gradient(135deg, ${colors.gold}, #D97706)`
-                  : `linear-gradient(135deg, ${colors.grape}, ${colors.primary})`,
+                  : `linear-gradient(135deg, ${colors.heart}, ${colors.heartDark})`,
                 color: "#fff", border: "none", fontSize: 15, fontWeight: 700, cursor: "pointer",
                 marginBottom: 8,
               }}>
@@ -3189,7 +3192,6 @@ JSON 형식:
           const totalBoards = grapeBoards.length;
           const sentCoupons = myCoupons.filter(c => c.from === user.name).length;
           const receivedCoupons = myCoupons.filter(c => c.to === user.name && c.status !== "draft").length;
-          const totalGrapes = grapeBoards.reduce((sum, b) => sum + (b.current || 0), 0);
           const choreCompletionRate = totalChores > 0 ? Math.round((totalChoresCompleted / totalChores) * 100) : 0;
           const boardCompletionRate = totalBoards > 0 ? Math.round((completedBoards / totalBoards) * 100) : 0;
           const relationScore = Math.min(100, Math.round((totalPraise * 5 + totalChoresCompleted * 3 + completedBoards * 10 + sentCoupons * 4 + receivedCoupons * 4) / Math.max(1, (totalPraise + totalChores + totalBoards + sentCoupons + receivedCoupons)) * 20));
@@ -3226,19 +3228,15 @@ JSON 형식:
             ))}
           </div>
 
-          {/* Grape Points Summary */}
+          {/* 말랑 현황 */}
           <div style={{
             background: "#fff", borderRadius: 16, padding: "20px",
             border: `1px solid ${colors.border}`, marginBottom: 12,
           }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text, marginBottom: 12 }}>🍇 말랑 현황</h3>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text, marginBottom: 12 }}>❤️ 말랑 현황</h3>
             <div style={{ display: "flex", justifyContent: "space-around", textAlign: "center" }}>
               <div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: colors.grape }}>{totalGrapes}</div>
-                <div style={{ fontSize: 11, color: colors.textTertiary }}>보유 포도알</div>
-              </div>
-              <div>
-                <div style={{ fontSize: 24, fontWeight: 800, color: colors.grape }}>{hearts}</div>
+                <div style={{ fontSize: 24, fontWeight: 800, color: colors.heart }}>{user.heartPoints || 0}</div>
                 <div style={{ fontSize: 11, color: colors.textTertiary }}>보유 하트</div>
               </div>
               <div>
@@ -3980,32 +3978,32 @@ JSON 형식:
                 긍정 언어 황금 비율, 가사 분담 체감 지수,<br/>
                 AI 대화 개선도, 취약 시간대 분석까지!
               </p>
-              <p style={{ fontSize: 12, color: colors.primary, fontWeight: 600, marginBottom: 20 }}>
-                🍇 포도알 10개로 열람 가능
+              <p style={{ fontSize: 12, color: colors.heart, fontWeight: 600, marginBottom: 20 }}>
+                ❤️ 하트 10개로 열람 가능
               </p>
 
               <button onClick={async () => {
-                if (user.grapePoints < 10) {
-                  showToast("포도알이 부족해요! (10개 필요) 🍇");
+                if ((user.heartPoints || 0) < 10) {
+                  showToast("하트가 부족해요! (10개 필요) ❤️");
                   return;
                 }
                 if (authUser) {
-                  const { error } = await spendGrapes(authUser.uid, user.coupleId || null, 10, 'report_unlock');
+                  const { error } = await spendHearts(authUser.uid, user.coupleId || null, 10, 'report_unlock');
                   if (error) { showToast(error); return; }
                 }
                 setReportTodayUnlocked(true);
                 showToast("심화 보고서가 열렸어요! 📈");
               }} style={{
                 width: "100%", padding: "16px", borderRadius: 14,
-                background: user.grapePoints >= 10
-                  ? `linear-gradient(135deg, ${colors.grape}, ${colors.primary})`
+                background: (user.heartPoints || 0) >= 10
+                  ? `linear-gradient(135deg, ${colors.heart}, ${colors.heartDark})`
                   : "#E5E7EB",
-                color: user.grapePoints >= 10 ? "#fff" : "#9CA3AF",
+                color: (user.heartPoints || 0) >= 10 ? "#fff" : "#9CA3AF",
                 border: "none", fontSize: 15, fontWeight: 700,
-                cursor: user.grapePoints >= 10 ? "pointer" : "default",
+                cursor: (user.heartPoints || 0) >= 10 ? "pointer" : "default",
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
               }}>
-                🍇 포도알 10개로 열기 (현재: {user.grapePoints}개)
+                ❤️ 하트 10개로 열기 (현재: {user.heartPoints || 0}개)
               </button>
             </div>
             );
@@ -4306,32 +4304,32 @@ JSON 형식:
                 대화 녹음 파일을 업로드하면<br/>
                 AI가 대화 패턴과 개선점을 분석해요
               </p>
-              <p style={{ fontSize: 12, color: colors.primary, fontWeight: 600, marginBottom: 20 }}>
-                🍇 포도알 10개로 이용 가능
+              <p style={{ fontSize: 12, color: colors.heart, fontWeight: 600, marginBottom: 20 }}>
+                ❤️ 하트 10개로 이용 가능
               </p>
 
               <button onClick={async () => {
-                if (user.grapePoints < 10) {
-                  showToast("포도알이 부족해요! (10개 필요) 🍇");
+                if ((user.heartPoints || 0) < 10) {
+                  showToast("하트가 부족해요! (10개 필요) ❤️");
                   return;
                 }
                 if (authUser) {
-                  const { error } = await spendGrapes(authUser.uid, user.coupleId || null, 10, 'voice_analysis_unlock');
+                  const { error } = await spendHearts(authUser.uid, user.coupleId || null, 10, 'voice_analysis_unlock');
                   if (error) { showToast(error); return; }
                 }
                 setVoiceUnlocked(true);
                 showToast("대화 분석 기능이 열렸어요! 🎙️");
               }} style={{
                 width: "100%", padding: "16px", borderRadius: 14,
-                background: user.grapePoints >= 10
-                  ? `linear-gradient(135deg, ${colors.grape}, ${colors.primary})`
+                background: (user.heartPoints || 0) >= 10
+                  ? `linear-gradient(135deg, ${colors.heart}, ${colors.heartDark})`
                   : "#E5E7EB",
-                color: user.grapePoints >= 10 ? "#fff" : "#9CA3AF",
+                color: (user.heartPoints || 0) >= 10 ? "#fff" : "#9CA3AF",
                 border: "none", fontSize: 15, fontWeight: 700,
-                cursor: user.grapePoints >= 10 ? "pointer" : "default",
+                cursor: (user.heartPoints || 0) >= 10 ? "pointer" : "default",
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
               }}>
-                🍇 포도알 10개로 열기 (현재: {user.grapePoints}개)
+                ❤️ 하트 10개로 열기 (현재: {user.heartPoints || 0}개)
               </button>
             </div>
           )}
@@ -4594,32 +4592,32 @@ A는 상황을 작성한 사람, B는 상대방이다.
                 갈등 상황을 적으면 AI가 공정하게<br/>
                 누가 더 잘못했는지 판별해드려요
               </p>
-              <p style={{ fontSize: 12, color: colors.primary, fontWeight: 600, marginBottom: 20 }}>
-                🍇 포도알 10개로 이용 가능
+              <p style={{ fontSize: 12, color: colors.heart, fontWeight: 600, marginBottom: 20 }}>
+                ❤️ 하트 10개로 이용 가능
               </p>
 
               <button onClick={async () => {
-                if (user.grapePoints < 10) {
-                  showToast("포도알이 부족해요! (10개 필요) 🍇");
+                if ((user.heartPoints || 0) < 10) {
+                  showToast("하트가 부족해요! (10개 필요) ❤️");
                   return;
                 }
                 if (authUser) {
-                  const { error } = await spendGrapes(authUser.uid, user.coupleId || null, 10, 'judge_unlock');
+                  const { error } = await spendHearts(authUser.uid, user.coupleId || null, 10, 'judge_unlock');
                   if (error) { showToast(error); return; }
                 }
                 setJudgeUnlocked(true);
                 showToast("갈등 심판 기능이 열렸어요! ⚖️");
               }} style={{
                 width: "100%", padding: "16px", borderRadius: 14,
-                background: user.grapePoints >= 10
-                  ? `linear-gradient(135deg, ${colors.grape}, ${colors.primary})`
+                background: (user.heartPoints || 0) >= 10
+                  ? `linear-gradient(135deg, ${colors.heart}, ${colors.heartDark})`
                   : "#E5E7EB",
-                color: user.grapePoints >= 10 ? "#fff" : "#9CA3AF",
+                color: (user.heartPoints || 0) >= 10 ? "#fff" : "#9CA3AF",
                 border: "none", fontSize: 15, fontWeight: 700,
-                cursor: user.grapePoints >= 10 ? "pointer" : "default",
+                cursor: (user.heartPoints || 0) >= 10 ? "pointer" : "default",
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
               }}>
-                🍇 포도알 10개로 열기 (현재: {user.grapePoints}개)
+                ❤️ 하트 10개로 열기 (현재: {user.heartPoints || 0}개)
               </button>
             </div>
           )}
@@ -4942,16 +4940,39 @@ A는 상황을 작성한 사람, B는 상대방이다.
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div>
                     <label style={{ fontSize: 12, color: colors.textSecondary, display: "block", marginBottom: 4 }}>내 이름</label>
-                    <input
-                      type="text"
-                      value={user.name}
-                      onChange={e => setUser(u => ({ ...u, name: e.target.value }))}
-                      style={{
-                        width: "100%", padding: "10px 12px", borderRadius: 10,
-                        border: `1.5px solid ${colors.border}`, fontSize: 14, fontWeight: 600,
-                        outline: "none", boxSizing: "border-box",
-                      }}
-                    />
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input
+                        type="text"
+                        value={user.name}
+                        onChange={e => setUser(u => ({ ...u, name: e.target.value }))}
+                        style={{
+                          flex: 1, padding: "10px 12px", borderRadius: 10,
+                          border: `1.5px solid ${colors.border}`, fontSize: 14, fontWeight: 600,
+                          outline: "none", boxSizing: "border-box",
+                        }}
+                      />
+                      <button
+                        onClick={async () => {
+                          if (!user.name || !user.name.trim()) {
+                            showToast("이름을 입력해주세요", "error");
+                            return;
+                          }
+                          const { error } = await updateUserData(authUser.uid, { displayName: user.name.trim() });
+                          if (error) {
+                            showToast("저장에 실패했어요", "error");
+                          } else {
+                            showToast("이름이 저장되었어요!");
+                          }
+                        }}
+                        style={{
+                          padding: "10px 16px", borderRadius: 10, border: "none",
+                          background: colors.primary, color: "#fff", fontSize: 13, fontWeight: 700,
+                          cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                        }}
+                      >
+                        저장
+                      </button>
+                    </div>
                   </div>
                   <div>
                     <label style={{ fontSize: 12, color: colors.textSecondary, display: "block", marginBottom: 4 }}>짝꿍 이름</label>
@@ -5003,7 +5024,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
                   }}>
                     <span style={{ fontSize: 13, color: colors.textSecondary }}>오늘 분석</span>
                     <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>
-                      {reportTodayUnlocked ? "열람 완료 ✅" : (!reportFreeUsed ? "첫 분석 무료 🎁" : "포도알 10개 필요 🔒")}
+                      {reportTodayUnlocked ? "열람 완료 ✅" : (!reportFreeUsed ? "첫 분석 무료 🎁" : "하트 10개 필요 🔒")}
                     </span>
                   </div>
                 </div>
@@ -5131,11 +5152,11 @@ A는 상황을 작성한 사람, B는 상대방이다.
             width: "90%", maxWidth: 370, maxHeight: "85vh", overflowY: "auto",
           }}>
             <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text, marginBottom: 4 }}>
-              {editCouponId ? "✏️ 쿠폰 수정" : couponCreateMode === "shop" ? "🍇 포도알 상점 쿠폰 등록" : "🎫 말랑 쿠폰 만들기"}
+              {editCouponId ? "✏️ 쿠폰 수정" : couponCreateMode === "shop" ? "❤️ 하트 상점 쿠폰 등록" : "🎫 말랑 쿠폰 만들기"}
             </h3>
             <p style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 20 }}>
               {couponCreateMode === "shop"
-                ? `${partnerDisplayName}님이 포도알로 구매할 수 있는 쿠폰을 등록하세요`
+                ? `${partnerDisplayName}님이 하트로 구매할 수 있는 쿠폰을 등록하세요`
                 : `${partnerDisplayName}님에게 보낼 특별한 쿠폰을 만들어보세요`}
             </p>
             <label style={{ fontSize: 13, fontWeight: 600, color: colors.text, display: "block", marginBottom: 6 }}>쿠폰 이름</label>
@@ -5166,7 +5187,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
             {/* Grapes price - shop mode only */}
             {couponCreateMode === "shop" && !editCouponId && (
               <>
-                <label style={{ fontSize: 13, fontWeight: 600, color: colors.text, display: "block", marginBottom: 6 }}>포도알 가격</label>
+                <label style={{ fontSize: 13, fontWeight: 600, color: colors.text, display: "block", marginBottom: 6 }}>하트 가격</label>
                 <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
                   <button onClick={() => setNewCouponGrapes(Math.max(1, newCouponGrapes - 1))} style={{
                     width: 36, height: 36, borderRadius: 10, border: `1.5px solid ${colors.border}`,
@@ -5174,16 +5195,16 @@ A는 상황을 작성한 사람, B는 상대방이다.
                     cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
                   }}>−</button>
                   <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                    <span style={{ fontSize: 16 }}>🍇</span>
+                    <span style={{ fontSize: 16 }}>❤️</span>
                     <input type="number" min="1" value={newCouponGrapes}
                       onChange={e => setNewCouponGrapes(Math.max(1, parseInt(e.target.value) || 1))}
                       style={{
                         width: 56, padding: "6px 4px", borderRadius: 8, border: `1.5px solid ${colors.border}`,
                         fontSize: 16, fontWeight: 700, textAlign: "center", outline: "none",
-                        color: colors.grape, boxSizing: "border-box",
+                        color: colors.heart, boxSizing: "border-box",
                       }}
                     />
-                    <span style={{ fontSize: 14, fontWeight: 600, color: colors.textSecondary }}>알</span>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: colors.textSecondary }}>개</span>
                   </div>
                   <button onClick={() => setNewCouponGrapes(newCouponGrapes + 1)} style={{
                     width: 36, height: 36, borderRadius: 10, border: `1.5px solid ${colors.border}`,
@@ -5198,7 +5219,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
               <div style={{ width: 48, height: 48, borderRadius: 14, margin: "0 auto 8px", background: `linear-gradient(135deg, ${colors.primary}, ${colors.grape})`, display: "flex", alignItems: "center", justifyContent: "center" }}><CouponIcon size={24} color="#fff" /></div>
               <div style={{ fontSize: 15, fontWeight: 700, color: newCoupon.title ? colors.primaryDark : colors.textTertiary }}>{newCoupon.title || "쿠폰 이름"}</div>
               {newCoupon.desc ? <div style={{ fontSize: 11, color: colors.textSecondary, marginTop: 4 }}>{newCoupon.desc}</div> : <div style={{ fontSize: 11, color: colors.textTertiary, marginTop: 4 }}>설명을 입력해보세요</div>}
-              {couponCreateMode === "shop" && <div style={{ fontSize: 12, color: colors.grape, fontWeight: 700, marginTop: 6 }}>🍇 {newCouponGrapes}알</div>}
+              {couponCreateMode === "shop" && <div style={{ fontSize: 12, color: colors.heart, fontWeight: 700, marginTop: 6 }}>❤️ {newCouponGrapes}하트</div>}
               {newCoupon.expiry ? <div style={{ fontSize: 10, color: colors.textTertiary, marginTop: 4 }}>유효기간: ~{newCoupon.expiry}</div> : <div style={{ fontSize: 10, color: colors.textTertiary, marginTop: 4 }}>유효기간을 선택해주세요</div>}
             </div>
             <div style={{ display: "flex", gap: 8 }}>
@@ -5230,20 +5251,20 @@ A는 상황을 작성한 사람, B는 상대방이다.
                   if (coupleId && authUser) {
                     const { error } = await createShopListing(coupleId, authUser.uid, {
                       title: newCoupon.title, desc: newCoupon.desc || "",
-                      grapes: newCouponGrapes, expiry: newCoupon.expiry, registeredBy: user.name,
+                      hearts: newCouponGrapes, grapes: newCouponGrapes, expiry: newCoupon.expiry, registeredBy: user.name,
                     });
                     if (error) { showToast(error, "error"); return; }
                   } else {
                     setShopCoupons(prev => [...prev, {
                       id: Date.now(), title: newCoupon.title, desc: newCoupon.desc || "",
-                      grapes: newCouponGrapes, expiry: newCoupon.expiry, registeredBy: user.name,
+                      hearts: newCouponGrapes, grapes: newCouponGrapes, expiry: newCoupon.expiry, registeredBy: user.name,
                     }]);
                   }
-                  showToast("포도알 상점에 쿠폰을 등록했어요! 🍇");
+                  showToast("하트 상점에 쿠폰을 등록했어요! ❤️");
                   setNewCoupon({ title: "", desc: "", expiry: "" }); setNewCouponGrapes(10); setCouponCreateMode("personal"); setShowCouponCreate(false);
                 }} style={{
                   flex: 1, padding: "14px", borderRadius: 12,
-                  background: (newCoupon.title.trim() && newCoupon.expiry) ? `linear-gradient(135deg, ${colors.grape}, ${colors.primary})` : "#E5E7EB",
+                  background: (newCoupon.title.trim() && newCoupon.expiry) ? `linear-gradient(135deg, ${colors.heart}, ${colors.heartDark})` : "#E5E7EB",
                   color: (newCoupon.title.trim() && newCoupon.expiry) ? "#fff" : "#9CA3AF",
                   border: "none", fontSize: 14, fontWeight: 700, cursor: (newCoupon.title.trim() && newCoupon.expiry) ? "pointer" : "default",
                 }}>등록하기</button>
@@ -5515,9 +5536,9 @@ A는 상황을 작성한 사람, B는 상대방이다.
       {/* Reward Modal on 100% completion - global */}
       {showRewardModal && (() => {
         const completionMessages = [
-          `🎉 축하해요! 목표를 달성했어요!\n${partnerDisplayName}님의 노력에 사랑의 쿠폰으로 보답해보는 건 어떨까요?`,
+          `🎉 축하해요! 목표를 달성했어요!\n${partnerDisplayName}님에게 하트와 쿠폰으로 보답해보세요!`,
           `💜 대단해요! 포도판을 완성했어요!\n이 기쁨을 ${partnerDisplayName}님과 함께 나눠보세요!`,
-          `🍇 달콤한 결실을 맺었어요!\n서로의 노력에 작은 선물로 감사를 전해보세요!`,
+          `🍇 달콤한 결실을 맺었어요!\n서로의 노력에 하트와 선물로 감사를 전해보세요!`,
         ];
         const randomMsg = completionMessages[Math.floor(Math.random() * completionMessages.length)];
         return (
@@ -5538,8 +5559,56 @@ A는 상황을 작성한 사람, B는 상대방이다.
               <p style={{ fontSize: 13, color: colors.textSecondary, marginBottom: 20, lineHeight: 1.7, whiteSpace: "pre-line" }}>
                 {randomMsg}
               </p>
+
+              {/* 하트 보상 설정 */}
+              <div style={{
+                background: colors.heartLight, borderRadius: 16, padding: "16px",
+                border: `1.5px solid ${colors.heart}`, marginBottom: 16,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: colors.heart, marginBottom: 10 }}>
+                  ❤️ {partnerDisplayName}님에게 줄 하트
+                </div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12 }}>
+                  <button onClick={() => setRewardHeartAmount(Math.max(0, rewardHeartAmount - 1))} style={{
+                    width: 36, height: 36, borderRadius: 10, border: `1.5px solid ${colors.heart}`,
+                    background: "#fff", fontSize: 18, fontWeight: 700, color: colors.heart,
+                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>−</button>
+                  <div style={{ fontSize: 28, fontWeight: 800, color: colors.heart, minWidth: 40 }}>
+                    {rewardHeartAmount}
+                  </div>
+                  <button onClick={() => setRewardHeartAmount(rewardHeartAmount + 1)} style={{
+                    width: 36, height: 36, borderRadius: 10, border: `1.5px solid ${colors.heart}`,
+                    background: "#fff", fontSize: 18, fontWeight: 700, color: colors.heart,
+                    cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>+</button>
+                </div>
+                <div style={{ fontSize: 11, color: colors.textTertiary, marginTop: 8 }}>
+                  0으로 설정하면 하트 없이 쿠폰만 보낼 수 있어요
+                </div>
+              </div>
+
               <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
-                <button onClick={() => { setShowRewardModal(false); setTab("coupon"); setCouponCreateMode("personal"); setShowCouponCreate(true); }} style={{
+                {rewardHeartAmount > 0 && (
+                  <button onClick={async () => {
+                    if (authUser && user.coupleId) {
+                      // 상대방에게 하트 지급 (파트너 uid 필요)
+                      // CoupleContext에서 partnerUid를 가져올 수 있으면 사용
+                      const { error } = await earnHearts(authUser.uid, user.coupleId, rewardHeartAmount, 'grape_board_reward', { boardTitle: rewardBoardTitle });
+                      if (error) { showToast(error, "error"); return; }
+                    }
+                    showToast(`❤️ ${rewardHeartAmount}하트를 보상으로 받았어요!`);
+                    setShowRewardModal(false);
+                    setRewardHeartAmount(3);
+                  }} style={{
+                    background: `linear-gradient(135deg, ${colors.heart}, ${colors.heartDark})`,
+                    border: "none", borderRadius: 16, padding: "18px 16px",
+                    cursor: "pointer", textAlign: "center", color: "#fff", fontSize: 15, fontWeight: 700,
+                  }}>
+                    ❤️ {rewardHeartAmount}하트 받기
+                  </button>
+                )}
+                <button onClick={() => { setShowRewardModal(false); setRewardHeartAmount(3); setTab("coupon"); setCouponCreateMode("personal"); setShowCouponCreate(true); }} style={{
                   background: `linear-gradient(135deg, ${colors.primaryLight}, #E0D4FC)`,
                   border: `1.5px solid ${colors.primary}`, borderRadius: 16, padding: "18px 16px",
                   cursor: "pointer", textAlign: "left",
@@ -5553,7 +5622,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
                     <ChevronRight size={18} color={colors.primary} />
                   </div>
                 </button>
-                <button onClick={() => { setShowRewardModal(false); setTab("shop"); }} style={{
+                <button onClick={() => { setShowRewardModal(false); setRewardHeartAmount(3); setTab("shop"); }} style={{
                   background: `linear-gradient(135deg, ${colors.goldLight}, #FEF3C7)`,
                   border: `1.5px solid ${colors.gold}`, borderRadius: 16, padding: "18px 16px",
                   cursor: "pointer", textAlign: "left",
@@ -5562,13 +5631,13 @@ A는 상황을 작성한 사람, B는 상대방이다.
                     <div style={{ fontSize: 32 }}>🎁</div>
                     <div style={{ flex: 1 }}>
                       <div style={{ fontSize: 15, fontWeight: 700, color: "#92400E", marginBottom: 4 }}>선물하러 가기</div>
-                      <div style={{ fontSize: 11, color: colors.textSecondary }}>포도알로 상점에서 특별한 선물을 골라보세요</div>
+                      <div style={{ fontSize: 11, color: colors.textSecondary }}>하트로 상점에서 특별한 선물을 골라보세요</div>
                     </div>
                     <ChevronRight size={18} color={colors.gold} />
                   </div>
                 </button>
               </div>
-              <button onClick={() => setShowRewardModal(false)} style={{
+              <button onClick={() => { setShowRewardModal(false); setRewardHeartAmount(3); }} style={{
                 background: "none", border: "none", color: colors.textTertiary, fontSize: 13, cursor: "pointer", padding: "8px",
               }}>나중에 할게요</button>
             </div>
