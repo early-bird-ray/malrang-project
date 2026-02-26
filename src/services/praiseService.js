@@ -1,7 +1,5 @@
 import {
   db,
-  doc,
-  runTransaction,
   collection,
   addDoc,
 } from './firebase';

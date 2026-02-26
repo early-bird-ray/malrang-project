@@ -180,6 +180,7 @@ export default function MallangApp() {
   const [couponViewTab, setCouponViewTab] = useState("sent"); // "sent" | "received"
   // hearts는 이제 Firestore의 user.heartPoints로 관리 (로컬 state 제거됨)
   const [confirmDeleteBoard, setConfirmDeleteBoard] = useState(null);
+  // eslint-disable-next-line no-unused-vars
   const [aiWeeklyTip, setAiWeeklyTip] = useState(null);
   const [aiReportInsight, setAiReportInsight] = useState(null);
   const [showPartnerRequiredPopup, setShowPartnerRequiredPopup] = useState(false);
