@@ -706,7 +706,7 @@ JSON 형식:
     const coupleId = user.coupleId;
     if (coupleId && authUser && user.partnerUid) {
       // Firestore 저장 → 리스너가 자동으로 praiseLog 업데이트
-      const { error } = await createPraise(coupleId, authUser.uid, user.partnerUid, praiseText.trim(), 3);
+      const { error } = await createPraise(coupleId, authUser.uid, user.partnerUid, praiseText.trim(), 1);
       if (error) { showToast(error, "error"); return; }
     } else {
       // 솔로 모드 fallback
@@ -717,9 +717,6 @@ JSON 형식:
         date: new Date().toLocaleDateString("ko-KR", { month: "long", day: "numeric" }),
       };
       setPraiseLog(prev => [newPraise, ...prev]);
-    }
-    if (authUser) {
-      earnHearts(authUser.uid, user.coupleId || null, 1, 'praise_send');
     }
     showToast(`${partnerDisplayName}님에게 칭찬을 보냈어요! 💜 하트 +1`);
     trackFeatureUse('praise_send');

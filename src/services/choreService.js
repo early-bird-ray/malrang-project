@@ -7,8 +7,6 @@ import {
   deleteDoc,
   getDoc,
 } from './firebase';
-import { earnGrapes } from './grapeService';
-
 // 집안일 생성
 export const createChore = async (coupleId, uid, choreData) => {
   if (!db) return { error: 'Firebase 미초기화' };
@@ -31,8 +29,8 @@ export const createChore = async (coupleId, uid, choreData) => {
   }
 };
 
-// 집안일 완료 토글 + 포도 적립
-export const toggleChoreComplete = async (coupleId, choreId, uid, grapeReward = 2) => {
+// 집안일 완료 토글
+export const toggleChoreComplete = async (coupleId, choreId, uid) => {
   if (!db) return { error: 'Firebase 미초기화' };
 
   try {
@@ -53,14 +51,6 @@ export const toggleChoreComplete = async (coupleId, choreId, uid, grapeReward = 
       completedByUid: !wasCompleted ? uid : null,
       updatedAt: now,
     });
-
-    // 완료 시 포도 적립
-    if (!wasCompleted && grapeReward > 0) {
-      await earnGrapes(uid, coupleId, grapeReward, 'chore_complete', {
-        choreId,
-        choreTitle: choreData.title || choreData.text,
-      });
-    }
 
     return { completed: !wasCompleted, error: null };
   } catch (error) {

@@ -1,12 +1,14 @@
 import {
   db,
+  doc,
+  runTransaction,
   collection,
   addDoc,
 } from './firebase';
-import { earnGrapes } from './grapeService';
+import { earnHearts } from './heartService';
 
-// 칭찬 생성 + 포도 적립
-export const createPraise = async (coupleId, fromUid, toUid, message, grapeReward = 3) => {
+// 칭찬 생성 + 하트 적립 (원자적)
+export const createPraise = async (coupleId, fromUid, toUid, message, heartReward = 1) => {
   if (!db) return { error: 'Firebase 미초기화' };
 
   try {
@@ -15,13 +17,13 @@ export const createPraise = async (coupleId, fromUid, toUid, message, grapeRewar
       fromUid,
       toUid,
       message,
-      grapes: grapeReward,
+      hearts: heartReward,
       createdAt: new Date().toISOString(),
     });
 
-    // 보낸 사람에게 포도 적립
-    if (grapeReward > 0) {
-      await earnGrapes(fromUid, coupleId, grapeReward, 'praise_sent', {
+    // 보낸 사람에게 하트 적립
+    if (heartReward > 0) {
+      await earnHearts(fromUid, coupleId, heartReward, 'praise_send', {
         praiseId: docRef.id,
         toUid,
       });
