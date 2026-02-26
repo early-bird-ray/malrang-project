@@ -60,65 +60,6 @@ export const earnGrapes = async (uid, coupleId, amount, reason, metadata = {}) =
   }
 };
 
-// 포도 소비 트랜잭션
-// 잔액 검증 → 차감 → 거래 로그 기록
-export const spendGrapes = async (uid, coupleId, amount, reason, metadata = {}) => {
-  if (!db) return { error: 'Firebase 미초기화' };
-  if (amount <= 0) return { error: '소비 금액은 0보다 커야 합니다' };
-
-  try {
-    const result = await runTransaction(db, async (transaction) => {
-      // 1. 유저 문서 읽기
-      const userRef = doc(db, 'users', uid);
-      const userSnap = await transaction.get(userRef);
-
-      if (!userSnap.exists()) {
-        throw new Error('유저 정보를 찾을 수 없습니다');
-      }
-
-      const userData = userSnap.data();
-      const currentPoints = userData.grapePoints || 0;
-
-      // 2. 잔액 검증
-      if (currentPoints < amount) {
-        throw new Error(`포도알이 부족합니다 (보유: ${currentPoints}, 필요: ${amount})`);
-      }
-
-      const newPoints = currentPoints - amount;
-
-      // 3. 포인트 차감
-      transaction.update(userRef, {
-        grapePoints: newPoints,
-        updatedAt: new Date().toISOString(),
-      });
-
-      return { grapePoints: newPoints };
-    });
-
-    // 4. 거래 로그 기록
-    if (coupleId) {
-      try {
-        const txRef = collection(db, 'couples', coupleId, 'grapeTransactions');
-        await addDoc(txRef, {
-          userId: uid,
-          type: 'spend',
-          amount: -amount,
-          reason,
-          ...metadata,
-          createdAt: new Date().toISOString(),
-        });
-      } catch (logError) {
-        console.error('Transaction log error (spend):', logError);
-      }
-    }
-
-    return { data: result, error: null };
-  } catch (error) {
-    console.error('Spend grapes error:', error);
-    return { data: null, error: error.message };
-  }
-};
-
 // 포도판 생성
 export const createGrapeBoard = async (coupleId, boardData) => {
   if (!db) return { error: 'Firebase 미초기화' };
