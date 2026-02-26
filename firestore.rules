@@ -186,6 +186,36 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      // 갈등심판 기록
+      match /judgeRecords/{recordId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow update, delete: if false;
+      }
+
+      // 몰래 한마디
+      match /secretMessages/{messageId} {
+        allow read: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        );
+        allow create: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && isCoupleActive(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && request.resource.data.fromUid == request.auth.uid;
+        // 읽음 처리 (isRead, readAt 업데이트만 허용)
+        allow update: if isCoupleMember(
+          get(/databases/$(database)/documents/couples/$(coupleId)).data
+        ) && resource.data.toUid == request.auth.uid;
+        allow delete: if false;
+      }
+
       // 기분 맞히기
       match /moodGuesses/{guessId} {
         allow read: if isCoupleMember(

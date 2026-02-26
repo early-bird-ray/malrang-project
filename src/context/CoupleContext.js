@@ -38,6 +38,12 @@ export function CoupleProvider({ children }) {
   // 파트너 기분 기록
   const [partnerMoodHistory, setPartnerMoodHistory] = useState([]);
 
+  // 몰래 한마디
+  const [secretMessages, setSecretMessages] = useState([]);
+
+  // 갈등심판 기록
+  const [judgeRecords, setJudgeRecords] = useState([]);
+
   // 파트너 정보
   const getPartnerUid = useCallback(() => {
     if (!coupleData || !uid) return null;
@@ -76,6 +82,8 @@ export function CoupleProvider({ children }) {
       setShopListings([]);
       setVoiceAnalyses([]);
       setReports([]);
+      setSecretMessages([]);
+      setJudgeRecords([]);
       return;
     }
 
@@ -92,6 +100,8 @@ export function CoupleProvider({ children }) {
       onShopListingsUpdate: setShopListings,
       onVoiceAnalysesUpdate: setVoiceAnalyses,
       onReportsUpdate: setReports,
+      onSecretMessagesUpdate: setSecretMessages,
+      onJudgeRecordsUpdate: setJudgeRecords,
     });
 
     return () => {
@@ -197,6 +207,12 @@ export function CoupleProvider({ children }) {
 
   const partnerSurveyCompleted = !!partnerUserData?.surveyCompleted;
 
+  // 읽지 않은 몰래 한마디 (내게 온 최신 메시지)
+  const unreadSecretMessage = useMemo(() => {
+    if (!uid || !secretMessages.length) return null;
+    return secretMessages.find(m => m.toUid === uid && !m.isRead) || null;
+  }, [secretMessages, uid]);
+
   const value = {
     // 커플 상태
     coupleData,
@@ -237,6 +253,13 @@ export function CoupleProvider({ children }) {
 
     // 파트너 기분 기록
     partnerMoodHistory,
+
+    // 몰래 한마디
+    secretMessages,
+    unreadSecretMessage,
+
+    // 갈등심판 기록
+    judgeRecords,
   };
 
   return (

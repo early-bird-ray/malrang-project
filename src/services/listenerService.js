@@ -141,6 +141,16 @@ export const subscribeToReports = (coupleId, callback) => {
   return subscribeToCoupleSubcollection(coupleId, 'reports', callback);
 };
 
+// 몰래 한마디 실시간 구독
+export const subscribeToSecretMessages = (coupleId, callback) => {
+  return subscribeToCoupleSubcollection(coupleId, 'secretMessages', callback);
+};
+
+// 갈등심판 기록 실시간 구독
+export const subscribeToJudgeRecords = (coupleId, callback) => {
+  return subscribeToCoupleSubcollection(coupleId, 'judgeRecords', callback);
+};
+
 // 개인 기분 기록 구독
 export const subscribeToMoodHistory = (uid, callback) => {
   if (!db) return () => {};
@@ -195,6 +205,8 @@ export const setupCoupleListeners = (coupleId, callbacks) => {
     onShopListingsUpdate,
     onVoiceAnalysesUpdate,
     onReportsUpdate,
+    onSecretMessagesUpdate,
+    onJudgeRecordsUpdate,
   } = callbacks;
 
   if (onCoupleUpdate) subscribeToCouple(coupleId, onCoupleUpdate);
@@ -206,6 +218,8 @@ export const setupCoupleListeners = (coupleId, callbacks) => {
   if (onShopListingsUpdate) subscribeToShopListings(coupleId, onShopListingsUpdate);
   if (onVoiceAnalysesUpdate) subscribeToVoiceAnalyses(coupleId, onVoiceAnalysesUpdate);
   if (onReportsUpdate) subscribeToReports(coupleId, onReportsUpdate);
+  if (onSecretMessagesUpdate) subscribeToSecretMessages(coupleId, onSecretMessagesUpdate);
+  if (onJudgeRecordsUpdate) subscribeToJudgeRecords(coupleId, onJudgeRecordsUpdate);
 };
 
 // 커플 관련 모든 리스너 해제
