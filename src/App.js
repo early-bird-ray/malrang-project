@@ -213,7 +213,7 @@ export default function MallangApp() {
       })();
     }
   }, [user.name, user.inviteCode, authUser]);
-  const reportUnlocked = reportTodayUnlocked; // 포도알 10개 결제 필요
+  const reportUnlocked = reportTodayUnlocked; // 하트 10개 결제 필요
 
   // AuthContext의 userData 최초 도착 시 레거시 데이터 로딩 + 화면 전환
   const legacyLoadedRef = useRef(false);
@@ -425,16 +425,15 @@ export default function MallangApp() {
     updateStreak(ctxActiveCoupleId);
   }, [ctxActiveCoupleId]);
 
-  // 기분 맞히기 결과 공개 시 포도알 적립
+  // 기분 맞히기 결과 공개 시 하트 적립
   const moodGuessRewardedRef = useRef(false);
   useEffect(() => {
     if (!ctxTodayMoodGuess || ctxTodayMoodGuess.isCorrect === null || ctxTodayMoodGuess.isCorrect === undefined) return;
     if (moodGuessRewardedRef.current) return;
     if (ctxTodayMoodGuess.guesserUid !== authUser?.uid) return;
     moodGuessRewardedRef.current = true;
-    const reward = ctxTodayMoodGuess.isCorrect ? 3 : 1;
-    earnGrapes(authUser.uid, ctxActiveCoupleId, reward, 'mood_guess_reward');
-    showToast(ctxTodayMoodGuess.isCorrect ? "정답! 🎉 🍇 +3 포도알" : "아쉽지만 참여 보상! 🍇 +1 포도알");
+    earnHearts(authUser.uid, ctxActiveCoupleId, 1, 'mood_guess_reward');
+    showToast(ctxTodayMoodGuess.isCorrect ? "정답! 🎉 ❤️ +1 하트" : "아쉽지만 참여 보상! ❤️ +1 하트");
   }, [ctxTodayMoodGuess, authUser, ctxActiveCoupleId]);
 
   // 탭 전환 시 Analytics
@@ -1177,12 +1176,12 @@ JSON 형식:
               return;
             }
             trackFeatureUse('daily_question_answer');
-            // 양쪽 모두 답변 완료 시 포도알 적립
+            // 양쪽 모두 답변 완료 시 하트 적립
             const updatedAnswers = { ...ctxDailyQuestion.answers, [authUser.uid]: { text } };
             const answerCount = Object.keys(updatedAnswers).length;
             if (answerCount >= 2) {
-              await earnGrapes(authUser.uid, ctxActiveCoupleId, 2, 'daily_question');
-              showToast("커플 질문 완료! 🍇 +2 포도알");
+              await earnHearts(authUser.uid, ctxActiveCoupleId, 1, 'daily_question');
+              showToast("커플 질문 완료! ❤️ +1 하트");
             } else {
               showToast("답변을 저장했어요! 💜");
             }
@@ -2318,7 +2317,7 @@ JSON 형식:
                         setTimeout(() => setShowConfetti(false), 3500);
                       }, 600);
                     } else {
-                      showToast(`${board.title} 성공! 포도알 +${board.perSuccess} 🍇`);
+                      showToast(`${board.title} 성공! 🍇 +${board.perSuccess}`);
                     }
                   }} style={{
                     padding: "6px 14px", borderRadius: 8,
@@ -2359,7 +2358,7 @@ JSON 형식:
           <div style={{ fontSize: 48, marginBottom: 12 }}>🍇</div>
           <h3 style={{ fontSize: 16, fontWeight: 700, color: colors.text, marginBottom: 8 }}>아직 포도판이 없어요</h3>
           <p style={{ fontSize: 13, color: colors.textTertiary, lineHeight: 1.6 }}>
-            목표를 세우고 포도알을 모아보세요!<br/>포도알로 쿠폰도 구매할 수 있어요
+            목표를 세우고 포도알을 모아보세요!<br/>포도판 완성 시 하트를 받을 수 있어요
           </p>
         </div>
       )}
@@ -2735,12 +2734,16 @@ JSON 형식:
                             border: "none", fontSize: 10, fontWeight: 700, color: "#fff", cursor: "pointer",
                           }}>보내기</button>
                         )}
-                        <button onClick={() => { setEditCouponId(coupon.id); setNewCoupon({ title: coupon.title, desc: coupon.desc, expiry: coupon.expiry }); setShowCouponCreate(true); }} style={{
-                          padding: "5px 8px", borderRadius: 6, background: "#F3F4F6", border: "none", fontSize: 10, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
-                        }}>수정</button>
-                        <button onClick={() => setConfirmDeleteCoupon(coupon.id)} style={{
-                          padding: "5px 8px", borderRadius: 6, background: colors.roseLight, border: "none", fontSize: 10, fontWeight: 600, color: colors.rose, cursor: "pointer",
-                        }}>삭제</button>
+                        {coupon.status !== "used" && (
+                          <button onClick={() => { setEditCouponId(coupon.id); setNewCoupon({ title: coupon.title, desc: coupon.desc, expiry: coupon.expiry }); setShowCouponCreate(true); }} style={{
+                            padding: "5px 8px", borderRadius: 6, background: "#F3F4F6", border: "none", fontSize: 10, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
+                          }}>수정</button>
+                        )}
+                        {coupon.status !== "used" && (
+                          <button onClick={() => setConfirmDeleteCoupon(coupon.id)} style={{
+                            padding: "5px 8px", borderRadius: 6, background: colors.roseLight, border: "none", fontSize: 10, fontWeight: 600, color: colors.rose, cursor: "pointer",
+                          }}>삭제</button>
+                        )}
                       </div>
                     </div>
                   );
@@ -2776,7 +2779,7 @@ JSON 형식:
                         background: coupon.origin === "shop" ? colors.grapeLight : colors.primaryLight,
                         color: coupon.origin === "shop" ? colors.grape : colors.primary,
                       }}>
-                        {coupon.origin === "shop" ? "포도알 구매" : "받은 쿠폰"}
+                        {coupon.origin === "shop" ? "하트 구매" : "받은 쿠폰"}
                       </span>
                     </div>
                     <div style={{ display: "flex", justifyContent: "center", marginBottom: 6, marginTop: 8 }}><CouponIcon size={28} color={coupon.status === "used" ? "#9CA3AF" : "#7C3AED"} /></div>
@@ -2824,14 +2827,14 @@ JSON 형식:
         </>
       )}
 
-      {/* Registered (포도알 상점에 등록한 쿠폰) */}
+      {/* Registered (하트 상점에 등록한 쿠폰) */}
       {couponViewTab === "registered" && (
         <div>
           <div style={{
             background: colors.grapeLight, borderRadius: 12, padding: "12px 14px", marginBottom: 14,
           }}>
             <p style={{ fontSize: 12, color: colors.grape, lineHeight: 1.5 }}>
-              💡 내가 등록한 쿠폰은 {partnerDisplayName}님의 <strong>포도알 상점</strong>에 표시돼요!
+              💡 내가 등록한 쿠폰은 {partnerDisplayName}님의 <strong>하트 상점</strong>에 표시돼요!
             </p>
           </div>
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
@@ -2870,7 +2873,7 @@ JSON 형식:
                 아직 등록한 쿠폰이 없어요
               </p>
               <p style={{ fontSize: 11, color: colors.textTertiary, lineHeight: 1.5 }}>
-                포도알 상점에 쿠폰을 등록하면<br/>{partnerDisplayName}님이 포도알로 구매할 수 있어요
+                하트 상점에 쿠폰을 등록하면<br/>{partnerDisplayName}님이 하트로 구매할 수 있어요
               </p>
             </div>
           )}
@@ -2907,7 +2910,7 @@ JSON 형식:
 
         {/* Filters */}
         <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
-          {["전체", "기프티콘", "포도알 상점"].map(f => (
+          {["전체", "기프티콘", "하트 상점"].map(f => (
             <button key={f} onClick={() => setGiftFilter(f)} style={{
               padding: "8px 12px", borderRadius: 20,
               background: giftFilter === f ? colors.primary : "#fff",
@@ -2945,7 +2948,7 @@ JSON 형식:
               })}
             </div>
 
-            {/* 상대방이 등록한 포도알 상점 쿠폰 */}
+            {/* 상대방이 등록한 하트 상점 쿠폰 */}
             {shopCoupons.filter(sc => sc.registeredBy !== user.name).length > 0 && (
               <>
                 <h4 style={{ fontSize: 13, fontWeight: 700, color: colors.text, marginBottom: 10 }}>❤️ {partnerDisplayName}님이 등록한 쿠폰</h4>
@@ -2993,11 +2996,11 @@ JSON 형식:
           </div>
         )}
 
-        {/* ── 포도알 상점 탭 ── */}
-        {giftFilter === "포도알 상점" && (
+        {/* ── 하트 상점 탭 ── */}
+        {giftFilter === "하트 상점" && (
           <div>
             <p style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 12 }}>
-              짝꿍이 등록한 쿠폰을 포도알로 구매하거나, 내가 쿠폰을 등록할 수 있어요
+              짝꿍이 등록한 쿠폰을 하트로 구매하거나, 내가 쿠폰을 등록할 수 있어요
             </p>
 
             {/* 짝꿍이 등록한 쿠폰 */}
@@ -3190,11 +3193,10 @@ JSON 형식:
           const totalChores = chores.length;
           const completedBoards = grapeBoards.filter(b => b.current >= b.goal).length;
           const totalBoards = grapeBoards.length;
-          const sentCoupons = myCoupons.filter(c => c.from === user.name).length;
-          const receivedCoupons = myCoupons.filter(c => c.to === user.name && c.status !== "draft").length;
+          const totalCoupons = myCoupons.filter(c => c.status !== "draft").length;
           const choreCompletionRate = totalChores > 0 ? Math.round((totalChoresCompleted / totalChores) * 100) : 0;
           const boardCompletionRate = totalBoards > 0 ? Math.round((completedBoards / totalBoards) * 100) : 0;
-          const relationScore = Math.min(100, Math.round((totalPraise * 5 + totalChoresCompleted * 3 + completedBoards * 10 + sentCoupons * 4 + receivedCoupons * 4) / Math.max(1, (totalPraise + totalChores + totalBoards + sentCoupons + receivedCoupons)) * 20));
+          const relationScore = Math.min(100, Math.round((totalPraise * 5 + totalChoresCompleted * 3 + completedBoards * 10 + totalCoupons * 4) / Math.max(1, (totalPraise + totalChores + totalBoards + totalCoupons)) * 20));
 
           return (<>
           {/* Overall Score */}
@@ -3215,7 +3217,7 @@ JSON 형식:
               { icon: "💜", label: "칭찬 횟수", value: `${totalPraise}회`, color: colors.primary, bg: colors.primaryLight },
               { icon: "✅", label: "할일 완료율", value: `${choreCompletionRate}%`, color: colors.mint, bg: colors.mintLight },
               { icon: "🍇", label: "포도판 달성", value: `${completedBoards}/${totalBoards}`, color: colors.grape, bg: colors.grapeLight },
-              { icon: "🎫", label: "쿠폰 교환", value: `${sentCoupons + receivedCoupons}장`, color: colors.warm, bg: colors.warmLight },
+              { icon: "🎫", label: "쿠폰 교환", value: `${totalCoupons}장`, color: colors.warm, bg: colors.warmLight },
             ].map((s, i) => (
               <div key={i} style={{
                 background: "#fff", borderRadius: 14, padding: "16px",
@@ -3965,7 +3967,7 @@ JSON 형식:
 
             // 데이터가 있지만 잠금 상태
             return (
-            /* 잠금 상태 - 포도알 10개 필요 */
+            /* 잠금 상태 - 하트 10개 필요 */
             <div style={{
               background: "#fff", borderRadius: 20, padding: "32px 24px",
               border: `1px solid ${colors.border}`, textAlign: "center",
@@ -4291,7 +4293,7 @@ JSON 형식:
           )}
           </>
           ) : (
-            /* 잠금 상태 - 포도알 10개 필요 */
+            /* 잠금 상태 - 하트 10개 필요 */
             <div style={{
               background: "#fff", borderRadius: 20, padding: "32px 24px",
               border: `1px solid ${colors.border}`, textAlign: "center",
@@ -4579,7 +4581,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
               )}
             </>
           ) : (
-            /* 잠금 상태 - 포도알 10개 필요 */
+            /* 잠금 상태 - 하트 10개 필요 */
             <div style={{
               background: "#fff", borderRadius: 20, padding: "32px 24px",
               border: `1px solid ${colors.border}`, textAlign: "center",

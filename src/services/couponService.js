@@ -8,28 +8,17 @@ import {
   updateDoc,
   deleteDoc,
 } from './firebase';
-import { spendGrapes } from './grapeService';
-
-// 쿠폰 생성 (포도 구매 포함)
+// 쿠폰 생성
 export const createCoupon = async (coupleId, uid, couponData, grapeCost = 0) => {
   if (!db) return { error: 'Firebase 미초기화' };
 
   try {
-    // 포도 비용이 있으면 먼저 차감
-    if (grapeCost > 0) {
-      const { error: spendError } = await spendGrapes(
-        uid, coupleId, grapeCost, 'coupon_purchase', { couponTitle: couponData.title }
-      );
-      if (spendError) return { error: spendError };
-    }
-
     const couponRef = collection(db, 'couples', coupleId, 'coupons');
     const docRef = await addDoc(couponRef, {
       ...couponData,
       fromUid: uid,
       toUid: couponData.toUid || null,
       status: couponData.toUid ? 'sent' : 'draft',
-      grapeCost,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
