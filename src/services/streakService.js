@@ -17,7 +17,7 @@ export const updateStreak = async (coupleId) => {
       }
 
       const data = coupleSnap.data();
-      const streak = data.streak || { current: 0, longest: 0, lastActiveDate: '' };
+      const streak = data.streak || { current: 0, longest: 0, lastActiveDate: '', activeDates: [] };
 
       const now = new Date();
       const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
@@ -39,10 +39,19 @@ export const updateStreak = async (coupleId) => {
 
       const newLongest = Math.max(newCurrent, streak.longest || 0);
 
+      // 활성 날짜 기록 (최대 최근 90일 유지)
+      const prevDates = streak.activeDates || [];
+      const updatedDates = [...prevDates, today];
+      // 90일 넘으면 오래된 날짜 제거
+      const trimmedDates = updatedDates.length > 90
+        ? updatedDates.slice(updatedDates.length - 90)
+        : updatedDates;
+
       const newStreak = {
         current: newCurrent,
         longest: newLongest,
         lastActiveDate: today,
+        activeDates: trimmedDates,
       };
 
       transaction.update(coupleRef, { streak: newStreak });

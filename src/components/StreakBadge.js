@@ -1,6 +1,6 @@
 import { colors } from '../constants/colors';
 
-export default function StreakBadge({ current, longest }) {
+export default function StreakBadge({ current, longest, onClick }) {
   if (!current || current <= 0) return null;
 
   let flame = '🔥';
@@ -22,10 +22,14 @@ export default function StreakBadge({ current, longest }) {
   }
 
   return (
-    <div style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      background: bgColor, borderRadius: 12, padding: '6px 12px',
-    }}>
+    <div
+      onClick={onClick}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 6,
+        background: bgColor, borderRadius: 12, padding: '6px 12px',
+        cursor: onClick ? 'pointer' : 'default',
+      }}
+    >
       <span style={{ fontSize: 16 }}>{flame}</span>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
         <span style={{ fontSize: 13, fontWeight: 800, color: badgeColor, lineHeight: 1.2 }}>

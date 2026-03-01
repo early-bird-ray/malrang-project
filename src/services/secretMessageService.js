@@ -4,10 +4,9 @@ import {
   collection,
   addDoc,
   updateDoc,
-  query,
-  where,
   onSnapshot,
-  getDocs,
+  getDoc,
+  setDoc,
 } from './firebase';
 
 // 몰래 한마디 보내기
@@ -15,19 +14,19 @@ export const sendSecretMessage = async (coupleId, fromUid, toUid, message) => {
   if (!db) return { error: 'Firebase 미초기화' };
 
   try {
-    // 오늘 이미 보냈는지 체크
+    // 오늘 이미 보냈는지 체크 (doc ID 고정 방식으로 query 없이 확인)
     const today = new Date();
     const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    const docId = `${fromUid}_${dateStr}`;
 
-    const colRef = collection(db, 'couples', coupleId, 'secretMessages');
-    const q = query(colRef, where('fromUid', '==', fromUid), where('dateStr', '==', dateStr));
-    const existing = await getDocs(q);
+    const msgRef = doc(db, 'couples', coupleId, 'secretMessages', docId);
+    const existing = await getDoc(msgRef);
 
-    if (!existing.empty) {
+    if (existing.exists()) {
       return { error: '오늘은 이미 몰래 한마디를 보냈어요!' };
     }
 
-    const docRef = await addDoc(colRef, {
+    await setDoc(msgRef, {
       fromUid,
       toUid,
       message,
@@ -37,7 +36,7 @@ export const sendSecretMessage = async (coupleId, fromUid, toUid, message) => {
       createdAt: new Date().toISOString(),
     });
 
-    return { id: docRef.id, error: null };
+    return { id: docId, error: null };
   } catch (error) {
     console.error('Send secret message error:', error);
     return { id: null, error: error.message };

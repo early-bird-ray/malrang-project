@@ -52,8 +52,8 @@ export default function DailyQuestionCard({
     setStep('done');
   };
 
-  // 하트 보상 배지 계산
-  const heartBadge = (() => {
+  // 포도알 보상 배지 계산
+  const grapeBadge = (() => {
     let total = 0;
     if (bothAnswered) total += 1;
     if (predictionCorrect) total += 1;
@@ -123,7 +123,7 @@ export default function DailyQuestionCard({
           🔮 {partnerName}님은 뭘 골랐을까?
         </span>
         <div style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4 }}>
-          맞추면 하트 +1 보너스!
+          맞추면 포도알 +1 보너스!
         </div>
       </div>
 
@@ -248,7 +248,7 @@ export default function DailyQuestionCard({
           </div>
           {predictionCorrect && (
             <div style={{ fontSize: 11, color: colors.mint, marginTop: 4, fontWeight: 600 }}>
-              보너스 하트 +1 획득!
+              보너스 포도알 +1 획득!
             </div>
           )}
         </div>
@@ -319,11 +319,11 @@ export default function DailyQuestionCard({
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
         <span style={{ fontSize: 20 }}>💬</span>
         <span style={{ fontSize: 13, fontWeight: 700, color: colors.primary }}>오늘의 커플 질문</span>
-        {heartBadge && (
+        {grapeBadge && (
           <span style={{
-            fontSize: 10, fontWeight: 700, color: colors.heart,
-            background: colors.heartLight, borderRadius: 8, padding: '2px 8px', marginLeft: 'auto',
-          }}>❤️ +{heartBadge}</span>
+            fontSize: 10, fontWeight: 700, color: colors.grape,
+            background: colors.grapeLight, borderRadius: 8, padding: '2px 8px', marginLeft: 'auto',
+          }}>🍇 +{grapeBadge}</span>
         )}
       </div>
 

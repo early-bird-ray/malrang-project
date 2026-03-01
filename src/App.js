@@ -15,7 +15,7 @@ import { updateStreak } from "./services/streakService";
 import { trackScreenView, trackFeatureUse } from "./services/analyticsService";
 import { saveAiTransformEntry, updateUserData, generateUniqueInviteCode, registerInviteCode, saveMoodEntry } from "./services/userService";
 import { createCoupon, sendCoupon, useCoupon as markCouponUsed, undoUseCoupon, updateCoupon, deleteCoupon, createShopListing, deleteShopListing } from "./services/couponService";
-import { createPair } from "./services/pairService";
+import { createPair, dissolvePair } from "./services/pairService";
 import { createPraise } from "./services/praiseService";
 import { useAuth } from "./context/AuthContext";
 import { useCouple } from "./context/CoupleContext";
@@ -136,6 +136,10 @@ export default function MallangApp() {
   }); // 심화 보고서 월 선택 (YYYY-MM 형식)
   const [selectedGift, setSelectedGift] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showStreakCalendar, setShowStreakCalendar] = useState(false);
+  const [streakCalendarMonth, setStreakCalendarMonth] = useState(() => {
+    const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() + 1 };
+  });
   const [notificationsOn, setNotificationsOn] = useState(true);
   const [settingsTab, setSettingsTab] = useState("main"); // "main" | "taste"
   const [likedWords, setLikedWords] = useState("괜찮아, 고마워, 같이 하자");
@@ -1147,9 +1151,9 @@ JSON 형식:
             background: colors.grapeLight, borderRadius: 10, padding: "6px 10px",
             fontSize: 12, fontWeight: 700, color: colors.grape,
           }}>
-            🍇 {user.grapePoints || 0}
+            🍇 {user.grapePoints || 0}개
           </div>
-          <StreakBadge current={ctxStreak?.current} longest={ctxStreak?.longest} />
+          <StreakBadge current={ctxStreak?.current} longest={ctxStreak?.longest} onClick={() => setShowStreakCalendar(true)} />
           <button onClick={() => setShowSettings(true)} style={{
             width: 38, height: 38, borderRadius: 12, background: "#fff",
             border: `1px solid ${colors.border}`, display: "flex", alignItems: "center",
@@ -1295,7 +1299,7 @@ JSON 형식:
       {/* Grape Boards Summary - compact horizontal scroll */}
       <div style={{ marginBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>🍇 내 포도판</h3>
+          <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>🍇 포도판</h3>
           <button onClick={() => setTab("grape")} style={{
             background: "none", border: "none", fontSize: 12, color: colors.primary,
             fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 2,
@@ -1308,8 +1312,8 @@ JSON 형식:
           scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch",
         }}>
           {(() => {
-            const myBoards = grapeBoards.filter(b => !b.owner || b.owner === "우리" || b.owner === user.name);
-            return myBoards.length > 0 ? myBoards.map(board => {
+            const allBoards = grapeBoards;
+            return allBoards.length > 0 ? allBoards.map(board => {
             const pct = Math.min((board.current / board.goal) * 100, 100);
             return (
               <div key={board.id} onClick={() => setTab("grape")} style={{
@@ -1358,7 +1362,7 @@ JSON 형식:
           );
           })()}
           {/* Add new board shortcut */}
-          {grapeBoards.filter(b => !b.owner || b.owner === "우리" || b.owner === user.name).length > 0 && (
+          {grapeBoards.length > 0 && (
           <div onClick={() => setTab("grape")} style={{
             minWidth: 80, flex: "0 0 auto",
             background: "#fff", borderRadius: 16,
@@ -4954,6 +4958,91 @@ A는 상황을 작성한 사람, B는 상대방이다.
 
       <Toast {...toast} />
 
+      {/* ── 스트릭 달력 모달 ── */}
+      {showStreakCalendar && (() => {
+        const { year, month } = streakCalendarMonth;
+        const activeDates = ctxStreak?.activeDates || [];
+        const firstDay = new Date(year, month - 1, 1).getDay(); // 0=Sun
+        const daysInMonth = new Date(year, month, 0).getDate();
+        const monthDates = activeDates.filter(d => d.startsWith(`${year}-${String(month).padStart(2, '0')}`));
+        const monthCount = monthDates.length;
+        const dayLabels = ['일', '월', '화', '수', '목', '금', '토'];
+
+        return (
+          <div style={{
+            position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+            zIndex: 300, display: "flex", alignItems: "center", justifyContent: "center",
+          }} onClick={() => setShowStreakCalendar(false)}>
+            <div onClick={e => e.stopPropagation()} style={{
+              background: "#fff", borderRadius: 24, padding: "24px 20px",
+              width: "90%", maxWidth: 360,
+            }}>
+              {/* Header */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <button onClick={() => {
+                  const prev = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
+                  setStreakCalendarMonth(prev);
+                }} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", padding: "4px 8px" }}>‹</button>
+                <div style={{ fontSize: 16, fontWeight: 800, color: colors.text }}>
+                  {year}년 {month}월
+                </div>
+                <button onClick={() => {
+                  const next = month === 12 ? { year: year + 1, month: 1 } : { year, month: month + 1 };
+                  setStreakCalendarMonth(next);
+                }} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", padding: "4px 8px" }}>›</button>
+              </div>
+
+              {/* Day labels */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, marginBottom: 4 }}>
+                {dayLabels.map(d => (
+                  <div key={d} style={{ textAlign: "center", fontSize: 11, fontWeight: 600, color: colors.textTertiary, padding: "4px 0" }}>{d}</div>
+                ))}
+              </div>
+
+              {/* Calendar grid */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+                {Array.from({ length: firstDay }).map((_, i) => <div key={`e${i}`} />)}
+                {Array.from({ length: daysInMonth }).map((_, i) => {
+                  const day = i + 1;
+                  const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                  const isActive = activeDates.includes(dateStr);
+                  const isToday = dateStr === `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-${String(new Date().getDate()).padStart(2, '0')}`;
+                  return (
+                    <div key={day} style={{
+                      textAlign: "center", padding: "8px 0",
+                      borderRadius: 10,
+                      background: isActive ? colors.primaryLight : "transparent",
+                      border: isToday ? `2px solid ${colors.primary}` : "2px solid transparent",
+                    }}>
+                      <div style={{
+                        fontSize: 13, fontWeight: isActive ? 700 : 400,
+                        color: isActive ? colors.primary : colors.textSecondary,
+                      }}>{day}</div>
+                      {isActive && <div style={{ fontSize: 8, marginTop: 1 }}>🔥</div>}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Summary */}
+              <div style={{
+                marginTop: 16, textAlign: "center", padding: "12px",
+                background: colors.primaryLight, borderRadius: 12,
+              }}>
+                <span style={{ fontSize: 14, fontWeight: 700, color: colors.primary }}>
+                  이번달 총 {monthCount}일 방문
+                </span>
+                {ctxStreak?.current > 0 && (
+                  <div style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4 }}>
+                    🔥 현재 {ctxStreak.current}일 연속 · 최고 {ctxStreak.longest || ctxStreak.current}일
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Full-screen Settings Modal */}
       {showSettings && (
         <div style={{
@@ -4961,7 +5050,7 @@ A는 상황을 작성한 사람, B는 상대방이다.
           zIndex: 200, overflowY: "auto",
         }}>
           {settingsTab === "main" ? (
-            <div style={{ maxWidth: 420, margin: "0 auto", padding: "0 20px" }}>
+            <div style={{ maxWidth: 420, margin: "0 auto", padding: "0 20px 40px" }}>
               {/* Settings Header */}
               <div style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -5273,12 +5362,39 @@ A는 상황을 작성한 사람, B는 상대방이다.
                   <div>
                     <label style={{ fontSize: 12, color: colors.textSecondary, display: "block", marginBottom: 4 }}>짝꿍 이름</label>
                     {user.partnerConnected ? (
-                      <div style={{
-                        padding: "10px 12px", borderRadius: 10,
-                        border: `1.5px solid ${colors.border}`, fontSize: 14, fontWeight: 600,
-                        background: "#F9FAFB", color: colors.text,
-                      }}>
-                        {user.partnerName || "짝꿍"}
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <div style={{
+                          flex: 1, padding: "10px 12px", borderRadius: 10,
+                          border: `1.5px solid ${colors.border}`, fontSize: 14, fontWeight: 600,
+                          background: "#F9FAFB", color: colors.text,
+                        }}>
+                          {user.partnerName || "짝꿍"}
+                        </div>
+                        <button onClick={() => {
+                          if (window.confirm(`정말 ${user.partnerName || "짝꿍"}님과 연결을 해제하시겠어요?\n\n⚠️ 상대방과의 모든 데이터(포도판, 쿠폰, 칭찬, 질문, 몰래 한마디 등)가 삭제되며 복구할 수 없습니다.`)) {
+                            if (window.confirm("정말로 연결 해제하시겠습니까? 이 작업은 되돌릴 수 없습니다.")) {
+                              (async () => {
+                                const { error } = await dissolvePair(user.coupleId, authUser.uid);
+                                if (error) {
+                                  showToast(error, "error");
+                                } else {
+                                  setUser(u => ({ ...u, partnerConnected: false, partnerName: "", coupleId: "" }));
+                                  setGrapeBoards([]);
+                                  setMyCoupons([]);
+                                  setShopCoupons([]);
+                                  showToast("짝꿍 연결이 해제되었어요");
+                                  setShowSettings(false);
+                                }
+                              })();
+                            }
+                          }
+                        }} style={{
+                          padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${colors.rose}`,
+                          background: "#fff", color: colors.rose, fontSize: 12, fontWeight: 600,
+                          cursor: "pointer", whiteSpace: "nowrap", flexShrink: 0,
+                        }}>
+                          연결 해제
+                        </button>
                       </div>
                     ) : (
                       <div style={{
