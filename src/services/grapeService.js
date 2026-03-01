@@ -60,6 +60,62 @@ export const earnGrapes = async (uid, coupleId, amount, reason, metadata = {}) =
   }
 };
 
+// 포도알 소비 트랜잭션
+// 잔액 검증 → 차감 → 거래 로그 기록 (포도판 진행과 무관)
+export const spendGrapes = async (uid, coupleId, amount, reason, metadata = {}) => {
+  if (!db) return { error: 'Firebase 미초기화' };
+  if (amount <= 0) return { error: '소비 금액은 0보다 커야 합니다' };
+
+  try {
+    const result = await runTransaction(db, async (transaction) => {
+      const userRef = doc(db, 'users', uid);
+      const userSnap = await transaction.get(userRef);
+
+      if (!userSnap.exists()) {
+        throw new Error('유저 정보를 찾을 수 없습니다');
+      }
+
+      const userData = userSnap.data();
+      const currentPoints = userData.grapePoints || 0;
+
+      if (currentPoints < amount) {
+        throw new Error(`포도알이 부족합니다 (보유: ${currentPoints}, 필요: ${amount})`);
+      }
+
+      const newPoints = currentPoints - amount;
+
+      transaction.update(userRef, {
+        grapePoints: newPoints,
+        updatedAt: new Date().toISOString(),
+      });
+
+      return { grapePoints: newPoints };
+    });
+
+    // 거래 로그 기록
+    if (coupleId) {
+      try {
+        const txRef = collection(db, 'couples', coupleId, 'grapeTransactions');
+        await addDoc(txRef, {
+          userId: uid,
+          type: 'spend',
+          amount: -amount,
+          reason,
+          ...metadata,
+          createdAt: new Date().toISOString(),
+        });
+      } catch (logError) {
+        console.error('Transaction log error (grape spend):', logError);
+      }
+    }
+
+    return { data: result, error: null };
+  } catch (error) {
+    console.error('Spend grapes error:', error);
+    return { data: null, error: error.message };
+  }
+};
+
 // 포도판 생성
 export const createGrapeBoard = async (coupleId, boardData) => {
   if (!db) return { error: 'Firebase 미초기화' };
@@ -112,7 +168,7 @@ export const updateGrapeBoardProgress = async (coupleId, boardId, uid, increment
       return { progress: newProgress, completed, goal: boardData.goal };
     });
 
-    // 완료 시 보너스: 하트 보상은 App.js의 reward modal에서 사용자가 직접 설정
+    // 완료 시: 축하 화면만 표시 (별도 보상 없음)
 
     return { data: result, error: null };
   } catch (error) {

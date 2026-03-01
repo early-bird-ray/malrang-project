@@ -9,7 +9,6 @@ export const MOCK_USER = {
   isSubscribed: false,
   grapePoints: 0,
   totalGrapes: 0,
-  heartPoints: 0,
   mallangCredits: 0,
   surveyCompleted: false,
   survey: null,
