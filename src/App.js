@@ -156,8 +156,18 @@ export default function MallangApp() {
   const [showAddTodo, setShowAddTodo] = useState(false);
   const [editTodoId, setEditTodoId] = useState(null); // 할일 수정 모드
   const [confirmDeleteTodo, setConfirmDeleteTodo] = useState(null); // 할일 삭제 확인
-  const [homeTopTab, setHomeTopTab] = useState("grape"); // "grape" | "todo"
+  // homeTopTab removed in home redesign (standalone sections)
   const [homeExpandedCard, setHomeExpandedCard] = useState(null); // null | "secret" | "question" | "mood" | "praise"
+  const [homeTappedToday, setHomeTappedToday] = useState(() => {
+    try {
+      const saved = localStorage.getItem('mallang_homeTapped');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.date === new Date().toISOString().slice(0, 10)) return parsed.keys || {};
+      }
+    } catch {}
+    return {};
+  });
   const [newTodoDays, setNewTodoDays] = useState(["월","화","수","목","금","토","일"]);
   const [myCoupons, setMyCoupons] = useState(() => loadFromStorage("myCoupons", []));
   const [showRewardModal, setShowRewardModal] = useState(false);
@@ -1157,6 +1167,14 @@ JSON 형식:
           )}
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button onClick={() => { setTab("coupon"); setCouponViewTab("received"); }} style={{
+            display: "inline-flex", alignItems: "center", gap: 4,
+            background: "#fff", borderRadius: 10, padding: "6px 10px",
+            fontSize: 12, fontWeight: 700, color: colors.warm,
+            border: `1px solid ${colors.border}`, cursor: "pointer",
+          }}>
+            🎫 내쿠폰
+          </button>
           <div style={{
             display: "inline-flex", alignItems: "center", gap: 4,
             background: colors.grapeLight, borderRadius: 10, padding: "6px 10px",
@@ -1198,26 +1216,8 @@ JSON 형식:
         </div>
       )}
 
-      {/* ═══ Block 1: 포도판 + 할일 Tab ═══ */}
+      {/* ═══ Section A: 포도판 (standalone) ═══ */}
       <div style={{ marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-          {[
-            { key: "grape", label: "🍇 포도판" },
-            { key: "todo", label: "✅ 할일" },
-          ].map(tb => (
-            <button key={tb.key} onClick={() => setHomeTopTab(tb.key)} style={{
-              padding: "8px 16px", borderRadius: 20,
-              background: homeTopTab === tb.key ? colors.primary : "#fff",
-              color: homeTopTab === tb.key ? "#fff" : colors.textSecondary,
-              border: homeTopTab === tb.key ? "none" : `1px solid ${colors.border}`,
-              fontSize: 13, fontWeight: 600, cursor: "pointer",
-            }}>
-              {tb.label}
-            </button>
-          ))}
-        </div>
-        {homeTopTab === "grape" && (
-        <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>🍇 포도판</h3>
           <button onClick={() => setTab("grape")} style={{
@@ -1295,28 +1295,321 @@ JSON 형식:
           </div>
           )}
         </div>
-        </div>
-        )}
+      </div>
 
-        {/* Todo Tab */}
-        {homeTopTab === "todo" && (
-        <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>📋 오늘의 할 일</h3>
-              <span style={{ fontSize: 12, color: colors.textTertiary }}>
-                {chores.filter(c => c.completed).length}/{chores.length} 완료
-              </span>
-            </div>
-            <button onClick={() => setShowAddTodo(true)} style={{
-              background: "none", border: "none", cursor: "pointer",
-              fontSize: 12, fontWeight: 600, color: colors.primary,
-              display: "flex", alignItems: "center", gap: 2,
+      {/* ═══ Section B: 오늘의 우리 (redesigned) ═══ */}
+      {ctxActiveCoupleId && (() => {
+        const markHomeTapped = (key) => {
+          setHomeTappedToday(prev => {
+            const next = { ...prev, [key]: true };
+            localStorage.setItem('mallang_homeTapped', JSON.stringify({ date: today, keys: next }));
+            return next;
+          });
+        };
+        return (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>💑 오늘의 우리</h3>
+            <span style={{
+              fontSize: 11, fontWeight: 600, color: dailyDoneCount >= 4 ? colors.mint : colors.primary,
+              background: dailyDoneCount >= 4 ? colors.mintLight : colors.primaryLight,
+              borderRadius: 10, padding: "2px 8px",
             }}>
-              관리 &gt;
-            </button>
+              {dailyDoneCount >= 4 ? "✓ " : ""}{dailyDoneCount}/4 완료
+            </span>
           </div>
 
+          {/* Urgent: unread secret message */}
+          {ctxUnreadSecretMessage && ctxPartnerUid && (
+            <div style={{ marginBottom: 8 }}>
+              <SecretMessageCard
+                unreadMessage={ctxUnreadSecretMessage}
+                todaySent={secretDoneToday}
+                myName={user.name}
+                partnerName={partnerDisplayName}
+                onSend={async (message) => {
+                  const { error } = await sendSecretMessage(
+                    ctxActiveCoupleId, authUser.uid, ctxPartnerUid, message
+                  );
+                  if (error) { showToast(error); return; }
+                  trackFeatureUse('secret_message_send');
+                  showToast("몰래 한마디를 보냈어요! 🤫");
+                }}
+                onMarkRead={async (messageId) => {
+                  const { error } = await markAsRead(ctxActiveCoupleId, messageId);
+                  if (error) { showToast("읽음 처리에 실패했어요"); return; }
+                  trackFeatureUse('secret_message_read');
+                }}
+              />
+            </div>
+          )}
+
+          {/* 4 Round Icon Buttons */}
+          <div style={{ display: "flex", justifyContent: "space-around", gap: 8 }}>
+            {[
+              { key: "secret", emoji: "🤫", label: "몰래 한마디", done: secretDoneToday, bg: "#FFE8A3" },
+              { key: "question", emoji: "❓", label: "커플질문", done: questionDoneToday, bg: "#E8DEFF" },
+              { key: "mood", emoji: "😆", label: "오늘기분", done: moodDoneToday, bg: "#D4EDDA" },
+              { key: "praise", emoji: "❤️", label: "칭찬하기", done: praiseDoneToday, bg: "#FFD6E0" },
+            ].map(card => (
+              <button key={card.key} onClick={() => {
+                markHomeTapped(card.key);
+                setHomeExpandedCard(prev => prev === card.key ? null : card.key);
+              }} style={{
+                background: "transparent", border: "none", cursor: "pointer",
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                padding: 0,
+              }}>
+                <div style={{ position: "relative" }}>
+                  <div style={{
+                    width: 52, height: 52, borderRadius: "50%",
+                    background: card.bg,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 24,
+                    boxShadow: homeExpandedCard === card.key ? `0 0 0 2.5px ${colors.primary}` : "none",
+                    transition: "box-shadow 0.2s",
+                  }}>
+                    {card.emoji}
+                  </div>
+                  {!homeTappedToday[card.key] && !card.done && (
+                    <div style={{
+                      position: "absolute", top: 0, right: 0,
+                      width: 8, height: 8, borderRadius: "50%",
+                      background: colors.rose, border: "2px solid #fff",
+                    }} />
+                  )}
+                  {card.done && (
+                    <div style={{
+                      position: "absolute", bottom: -2, right: -2,
+                      width: 18, height: 18, borderRadius: "50%",
+                      background: colors.mint, border: "2px solid #fff",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                    }}>
+                      <Check size={10} color="#fff" />
+                    </div>
+                  )}
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 600, color: colors.text }}>{card.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        );
+      })()}
+
+      {/* Modal: 몰래 한마디 */}
+      {homeExpandedCard === "secret" && ctxPartnerUid && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center",
+        }} onClick={() => setHomeExpandedCard(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: "#fff", borderRadius: "24px 24px 0 0", padding: "24px 20px 32px",
+            width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto",
+            animation: "slideUp 0.3s ease",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text }}>🤫 몰래 한마디</h3>
+              <button onClick={() => setHomeExpandedCard(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
+                <X size={20} color={colors.textTertiary} />
+              </button>
+            </div>
+            <SecretMessageCard
+              unreadMessage={ctxUnreadSecretMessage}
+              todaySent={secretDoneToday}
+              myName={user.name}
+              partnerName={partnerDisplayName}
+              onSend={async (message) => {
+                const { error } = await sendSecretMessage(
+                  ctxActiveCoupleId, authUser.uid, ctxPartnerUid, message
+                );
+                if (error) { showToast(error); return; }
+                trackFeatureUse('secret_message_send');
+                showToast("몰래 한마디를 보냈어요! 🤫");
+              }}
+              onMarkRead={async (messageId) => {
+                const { error } = await markAsRead(ctxActiveCoupleId, messageId);
+                if (error) { showToast("읽음 처리에 실패했어요"); return; }
+                trackFeatureUse('secret_message_read');
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Modal: 커플 질문 */}
+      {homeExpandedCard === "question" && ctxDailyQuestion && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center",
+        }} onClick={() => setHomeExpandedCard(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: "#fff", borderRadius: "24px 24px 0 0", padding: "24px 20px 32px",
+            width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto",
+            animation: "slideUp 0.3s ease",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text }}>❓ 오늘의 커플 질문</h3>
+              <button onClick={() => setHomeExpandedCard(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
+                <X size={20} color={colors.textTertiary} />
+              </button>
+            </div>
+            <DailyQuestionCard
+              question={ctxDailyQuestion}
+              myAnswer={ctxDailyQuestion.answers?.[authUser?.uid]}
+              partnerAnswer={ctxDailyQuestion.answers?.[ctxPartnerUid]}
+              myPrediction={ctxDailyQuestion.predictions?.[authUser?.uid]}
+              partnerPrediction={ctxDailyQuestion.predictions?.[ctxPartnerUid]}
+              myName={user.name}
+              partnerName={partnerDisplayName}
+              pastAnswers={ctxDailyQuestion._pastAnswers}
+              onSubmit={async (text) => {
+                const { error } = await submitAnswer(ctxActiveCoupleId, today, authUser.uid, text);
+                if (error) { showToast("답변 저장에 실패했어요"); return; }
+                trackFeatureUse('daily_question_answer');
+                const updatedAnswers = { ...ctxDailyQuestion.answers, [authUser.uid]: { text } };
+                const answerCount = Object.keys(updatedAnswers).length;
+                if (answerCount >= 2) {
+                  await earnGrapes(authUser.uid, ctxActiveCoupleId, 1, 'daily_question');
+                  if (ctxPartnerUid) {
+                    await earnGrapes(ctxPartnerUid, ctxActiveCoupleId, 1, 'daily_question');
+                  }
+                  showToast("커플 질문 완료! 양쪽 모두 🍇 +1 포도알");
+                } else {
+                  showToast("답변을 저장했어요! 💜");
+                }
+                if (ctxDailyQuestion.questionIndex != null) {
+                  getPastAnswers(ctxActiveCoupleId, ctxDailyQuestion.questionIndex);
+                }
+              }}
+              onPredict={async (text) => {
+                const { error } = await submitPrediction(ctxActiveCoupleId, today, authUser.uid, text);
+                if (error) { showToast("예측 저장에 실패했어요"); return; }
+                trackFeatureUse('daily_question_predict');
+                const partnerAns = ctxDailyQuestion.answers?.[ctxPartnerUid];
+                if (partnerAns && partnerAns.text === text) {
+                  await earnGrapes(authUser.uid, ctxActiveCoupleId, 1, 'daily_question_predict_correct');
+                  showToast("예측 적중! 🎯 보너스 🍇 +1 포도알");
+                } else if (partnerAns) {
+                  showToast("아쉽게 빗나갔어요 😅");
+                } else {
+                  showToast("예측을 저장했어요! 🔮");
+                }
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Modal: 오늘 기분 */}
+      {homeExpandedCard === "mood" && ctxPartnerUid && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center",
+        }} onClick={() => setHomeExpandedCard(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: "#fff", borderRadius: "24px 24px 0 0", padding: "24px 20px 32px",
+            width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto",
+            animation: "slideUp 0.3s ease",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text }}>😆 오늘의 기분</h3>
+              <button onClick={() => setHomeExpandedCard(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
+                <X size={20} color={colors.textTertiary} />
+              </button>
+            </div>
+            {(() => {
+              const myTodayMood = moodHistory.find(m => m.date === today);
+              const partnerTodayMood = ctxPartnerMoodHistory.find(m => m.date === today);
+              return (
+                <CoupleMoodCard
+                  myMood={myTodayMood}
+                  partnerMood={partnerTodayMood}
+                  myName={user.name || '나'}
+                  partnerName={partnerDisplayName}
+                  onRecordMood={() => setShowMoodPopup(true)}
+                />
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* Modal: 칭찬하기 */}
+      {homeExpandedCard === "praise" && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)",
+          zIndex: 100, display: "flex", alignItems: "flex-end", justifyContent: "center",
+        }} onClick={() => setHomeExpandedCard(null)}>
+          <div onClick={e => e.stopPropagation()} style={{
+            background: "#fff", borderRadius: "24px 24px 0 0", padding: "24px 20px 32px",
+            width: "100%", maxWidth: 420, maxHeight: "85vh", overflowY: "auto",
+            animation: "slideUp 0.3s ease",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h3 style={{ fontSize: 18, fontWeight: 700, color: colors.text }}>❤️ 칭찬하기</h3>
+              <button onClick={() => setHomeExpandedCard(null)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4 }}>
+                <X size={20} color={colors.textTertiary} />
+              </button>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+              {["오늘도 수고했어 💪", "고마워 항상 🥰", "사랑해 ❤️", "같이 있어 좋아 😊"].map(tmpl => (
+                <button key={tmpl} onClick={() => setPraiseText(tmpl)} style={{
+                  padding: "6px 12px", borderRadius: 20,
+                  background: praiseText === tmpl ? colors.grapeLight : "#F3F4F6",
+                  border: praiseText === tmpl ? `1px solid ${colors.grape}` : "1px solid transparent",
+                  fontSize: 12, color: praiseText === tmpl ? colors.grape : colors.textSecondary,
+                  fontWeight: 500, cursor: "pointer",
+                }}>
+                  {tmpl}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="text"
+                placeholder="칭찬 메시지를 입력하세요..."
+                value={praiseText}
+                onChange={e => setPraiseText(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") { sendPraise(); setHomeExpandedCard(null); } }}
+                style={{
+                  flex: 1, padding: "10px 14px", borderRadius: 12,
+                  border: `1.5px solid ${colors.border}`, fontSize: 13,
+                  outline: "none", boxSizing: "border-box",
+                }}
+              />
+              <button onClick={() => { sendPraise(); setHomeExpandedCard(null); }} disabled={!praiseText.trim()} style={{
+                width: 42, height: 42, borderRadius: 12, border: "none",
+                background: praiseText.trim() ? colors.grape : "#E5E7EB",
+                color: "#fff", cursor: praiseText.trim() ? "pointer" : "default",
+                display: "flex", alignItems: "center", justifyContent: "center",
+              }}>
+                <Send size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Section C: 오늘의 할 일 (standalone) ═══ */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>📋 오늘의 할 일</h3>
+            <span style={{ fontSize: 12, color: colors.textTertiary }}>
+              {chores.filter(c => c.completed).length}/{chores.length} 완료
+            </span>
+          </div>
+          <button onClick={() => setShowAddTodo(true)} style={{
+            background: "none", border: "none", cursor: "pointer",
+            fontSize: 12, fontWeight: 600, color: colors.primary,
+            display: "flex", alignItems: "center", gap: 2,
+          }}>
+            관리 &gt;
+          </button>
+        </div>
+
+        <div style={chores.length >= 3 ? { maxHeight: 220, overflowY: "auto" } : {}}>
           {/* Routine tasks */}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {chores.filter(c => c.type === "routine").map(c => (
@@ -1443,280 +1736,33 @@ JSON 형식:
             </div>
           )}
         </div>
-        )}
       </div>
 
-      {/* ═══ Block 2: 오늘의 우리 ═══ */}
-      {ctxActiveCoupleId && (
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>💑 오늘의 우리</h3>
-            <span style={{
-              fontSize: 11, fontWeight: 600, color: dailyDoneCount >= 4 ? colors.mint : colors.primary,
-              background: dailyDoneCount >= 4 ? colors.mintLight : colors.primaryLight,
-              borderRadius: 10, padding: "2px 8px",
-            }}>
-              {dailyDoneCount >= 4 ? "✓ " : ""}{dailyDoneCount}/4 완료
-            </span>
-          </div>
-
-          {/* Urgent: unread secret message */}
-          {ctxUnreadSecretMessage && ctxPartnerUid && (
-            <div style={{ marginBottom: 8 }}>
-              <SecretMessageCard
-                unreadMessage={ctxUnreadSecretMessage}
-                todaySent={secretDoneToday}
-                myName={user.name}
-                partnerName={partnerDisplayName}
-                onSend={async (message) => {
-                  const { error } = await sendSecretMessage(
-                    ctxActiveCoupleId, authUser.uid, ctxPartnerUid, message
-                  );
-                  if (error) { showToast(error); return; }
-                  trackFeatureUse('secret_message_send');
-                  showToast("몰래 한마디를 보냈어요! 🤫");
-                }}
-                onMarkRead={async (messageId) => {
-                  const { error } = await markAsRead(ctxActiveCoupleId, messageId);
-                  if (error) { showToast("읽음 처리에 실패했어요"); return; }
-                  trackFeatureUse('secret_message_read');
-                }}
-              />
-            </div>
-          )}
-
-          {/* 2x2 Mini Card Grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-            {[
-              { key: "secret", emoji: "🤫", label: "몰래 한마디", done: secretDoneToday, color: colors.gold, bg: colors.goldLight },
-              { key: "question", emoji: "❓", label: "커플 질문", done: questionDoneToday, color: colors.primary, bg: colors.primaryLight },
-              { key: "mood", emoji: "😊", label: "오늘 기분", done: moodDoneToday, color: colors.warm, bg: colors.warmLight },
-              { key: "praise", emoji: "💜", label: "칭찬하기", done: praiseDoneToday, color: colors.grape, bg: colors.grapeLight },
-            ].map(card => (
-              <button key={card.key} onClick={() => setHomeExpandedCard(prev => prev === card.key ? null : card.key)} style={{
-                padding: "14px 12px", borderRadius: 14,
-                background: homeExpandedCard === card.key ? card.bg : "#fff",
-                border: `1.5px solid ${homeExpandedCard === card.key ? card.color : colors.border}`,
-                cursor: "pointer", textAlign: "left",
-                transition: "all 0.2s",
-              }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 18 }}>{card.emoji}</span>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: colors.text }}>{card.label}</span>
-                  </div>
-                  {card.done && <Check size={14} color={colors.mint} />}
-                </div>
-              </button>
-            ))}
-          </div>
-
-          {/* Expanded: 몰래 한마디 */}
-          {homeExpandedCard === "secret" && ctxPartnerUid && (
-            <div style={{ marginTop: 8 }}>
-              <SecretMessageCard
-                unreadMessage={ctxUnreadSecretMessage}
-                todaySent={secretDoneToday}
-                myName={user.name}
-                partnerName={partnerDisplayName}
-                onSend={async (message) => {
-                  const { error } = await sendSecretMessage(
-                    ctxActiveCoupleId, authUser.uid, ctxPartnerUid, message
-                  );
-                  if (error) { showToast(error); return; }
-                  trackFeatureUse('secret_message_send');
-                  showToast("몰래 한마디를 보냈어요! 🤫");
-                }}
-                onMarkRead={async (messageId) => {
-                  const { error } = await markAsRead(ctxActiveCoupleId, messageId);
-                  if (error) { showToast("읽음 처리에 실패했어요"); return; }
-                  trackFeatureUse('secret_message_read');
-                }}
-              />
-            </div>
-          )}
-
-          {/* Expanded: 커플 질문 */}
-          {homeExpandedCard === "question" && ctxDailyQuestion && (
-            <div style={{ marginTop: 8 }}>
-              <DailyQuestionCard
-                question={ctxDailyQuestion}
-                myAnswer={ctxDailyQuestion.answers?.[authUser?.uid]}
-                partnerAnswer={ctxDailyQuestion.answers?.[ctxPartnerUid]}
-                myPrediction={ctxDailyQuestion.predictions?.[authUser?.uid]}
-                partnerPrediction={ctxDailyQuestion.predictions?.[ctxPartnerUid]}
-                myName={user.name}
-                partnerName={partnerDisplayName}
-                pastAnswers={ctxDailyQuestion._pastAnswers}
-                onSubmit={async (text) => {
-                  const { error } = await submitAnswer(ctxActiveCoupleId, today, authUser.uid, text);
-                  if (error) { showToast("답변 저장에 실패했어요"); return; }
-                  trackFeatureUse('daily_question_answer');
-                  const updatedAnswers = { ...ctxDailyQuestion.answers, [authUser.uid]: { text } };
-                  const answerCount = Object.keys(updatedAnswers).length;
-                  if (answerCount >= 2) {
-                    await earnGrapes(authUser.uid, ctxActiveCoupleId, 1, 'daily_question');
-                    if (ctxPartnerUid) {
-                      await earnGrapes(ctxPartnerUid, ctxActiveCoupleId, 1, 'daily_question');
-                    }
-                    showToast("커플 질문 완료! 양쪽 모두 🍇 +1 포도알");
-                  } else {
-                    showToast("답변을 저장했어요! 💜");
-                  }
-                  if (ctxDailyQuestion.questionIndex != null) {
-                    getPastAnswers(ctxActiveCoupleId, ctxDailyQuestion.questionIndex);
-                  }
-                }}
-                onPredict={async (text) => {
-                  const { error } = await submitPrediction(ctxActiveCoupleId, today, authUser.uid, text);
-                  if (error) { showToast("예측 저장에 실패했어요"); return; }
-                  trackFeatureUse('daily_question_predict');
-                  const partnerAns = ctxDailyQuestion.answers?.[ctxPartnerUid];
-                  if (partnerAns && partnerAns.text === text) {
-                    await earnGrapes(authUser.uid, ctxActiveCoupleId, 1, 'daily_question_predict_correct');
-                    showToast("예측 적중! 🎯 보너스 🍇 +1 포도알");
-                  } else if (partnerAns) {
-                    showToast("아쉽게 빗나갔어요 😅");
-                  } else {
-                    showToast("예측을 저장했어요! 🔮");
-                  }
-                }}
-              />
-            </div>
-          )}
-
-          {/* Expanded: 오늘 기분 */}
-          {homeExpandedCard === "mood" && ctxPartnerUid && (
-            <div style={{ marginTop: 8 }}>
-              {(() => {
-                const myTodayMood = moodHistory.find(m => m.date === today);
-                const partnerTodayMood = ctxPartnerMoodHistory.find(m => m.date === today);
-                return (
-                  <CoupleMoodCard
-                    myMood={myTodayMood}
-                    partnerMood={partnerTodayMood}
-                    myName={user.name || '나'}
-                    partnerName={partnerDisplayName}
-                    onRecordMood={() => setShowMoodPopup(true)}
-                  />
-                );
-              })()}
-            </div>
-          )}
-
-          {/* Expanded: 칭찬하기 */}
-          {homeExpandedCard === "praise" && (
-            <div style={{
-              marginTop: 8, background: "#fff", borderRadius: 14, padding: "14px",
-              border: `1px solid ${colors.border}`, boxShadow: colors.shadow,
-            }}>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
-                {["오늘도 수고했어 💪", "고마워 항상 🥰", "사랑해 ❤️", "같이 있어 좋아 😊"].map(tmpl => (
-                  <button key={tmpl} onClick={() => setPraiseText(tmpl)} style={{
-                    padding: "6px 12px", borderRadius: 20,
-                    background: praiseText === tmpl ? colors.grapeLight : "#F3F4F6",
-                    border: praiseText === tmpl ? `1px solid ${colors.grape}` : "1px solid transparent",
-                    fontSize: 12, color: praiseText === tmpl ? colors.grape : colors.textSecondary,
-                    fontWeight: 500, cursor: "pointer",
-                  }}>
-                    {tmpl}
-                  </button>
-                ))}
-              </div>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input
-                  type="text"
-                  placeholder="칭찬 메시지를 입력하세요..."
-                  value={praiseText}
-                  onChange={e => setPraiseText(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") { sendPraise(); setHomeExpandedCard(null); } }}
-                  style={{
-                    flex: 1, padding: "10px 14px", borderRadius: 12,
-                    border: `1.5px solid ${colors.border}`, fontSize: 13,
-                    outline: "none", boxSizing: "border-box",
-                  }}
-                />
-                <button onClick={() => { sendPraise(); setHomeExpandedCard(null); }} disabled={!praiseText.trim()} style={{
-                  width: 42, height: 42, borderRadius: 12, border: "none",
-                  background: praiseText.trim() ? colors.grape : "#E5E7EB",
-                  color: "#fff", cursor: praiseText.trim() ? "pointer" : "default",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                }}>
-                  <Send size={16} />
-                </button>
-              </div>
-            </div>
-          )}
+      {/* ═══ Section D: 말랑 도구 (2 buttons) ═══ */}
+      <div style={{ marginBottom: 16 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text, marginBottom: 10 }}>💬 말랑 도구</h3>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => {
+            if (!user.surveyCompleted) { setShowSurveyPrompt(true); return; }
+            setShowConflictInput(true);
+          }} style={{
+            flex: 1, padding: "12px 16px", borderRadius: 12,
+            background: colors.warmLight, border: `1.5px solid ${colors.warm}33`,
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}>
+            <MessageCircle size={16} color={colors.warm} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: colors.warm }}>대화 도우미</span>
+          </button>
+          <button onClick={() => { setTab("report"); setReportSubTab("judge"); }} style={{
+            flex: 1, padding: "12px 16px", borderRadius: 12,
+            background: colors.primaryLight, border: `1.5px solid ${colors.primary}33`,
+            cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+          }}>
+            <BarChart3 size={16} color={colors.primary} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: colors.primary }}>갈등 심판</span>
+          </button>
         </div>
-      )}
-
-      {/* 받은 쿠폰 - compact */}
-      {(() => {
-        const receivedCoupons = myCoupons.filter(c => c.to === user.name && c.status !== "draft");
-        return (
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text }}>🎫 받은 쿠폰</h3>
-                {receivedCoupons.length > 0 && (
-                  <span style={{
-                    fontSize: 11, fontWeight: 700, color: colors.warm,
-                    background: colors.warmLight, borderRadius: 10, padding: "2px 8px",
-                  }}>{receivedCoupons.length}</span>
-                )}
-              </div>
-              {receivedCoupons.length > 0 && (
-                <button onClick={() => { setTab("coupon"); setCouponViewTab("received"); }} style={{
-                  background: "none", border: "none", fontSize: 12, color: colors.primary,
-                  fontWeight: 600, cursor: "pointer", display: "flex", alignItems: "center", gap: 2,
-                }}>
-                  전체보기 <ChevronRight size={14} />
-                </button>
-              )}
-            </div>
-            {receivedCoupons.length > 0 ? (
-              <div style={{ display: "flex", gap: 8, overflowX: "auto", paddingBottom: 2, WebkitOverflowScrolling: "touch" }}>
-                {receivedCoupons.map(coupon => {
-                  const daysLeft = Math.max(0, Math.ceil((new Date(coupon.expiry) - new Date()) / 86400000));
-                  return (
-                    <div key={coupon.id} style={{
-                      minWidth: 130, flex: "0 0 auto", display: "flex", alignItems: "center", gap: 10,
-                      background: "#fff", borderRadius: 12, padding: "10px 12px",
-                      border: `1px solid ${colors.border}`,
-                      boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
-                      opacity: coupon.status === "used" ? 0.6 : 1,
-                    }}>
-                      <div style={{
-                        width: 34, height: 34, borderRadius: 8,
-                        background: "#fff",
-                        border: `1.5px solid ${colors.border}`,
-                        display: "flex", alignItems: "center", justifyContent: "center",
-                      }}><CouponIcon size={18} /></div>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 600, color: colors.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {coupon.title}
-                        </div>
-                        <div style={{ fontSize: 10, color: coupon.status === "used" ? colors.mint : (daysLeft <= 7 ? colors.rose : colors.textTertiary), fontWeight: 500 }}>
-                          {coupon.status === "used" ? "사용 완료" : (daysLeft <= 0 ? "만료" : `D-${daysLeft}`)}
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div style={{
-                background: "#fff", borderRadius: 12, padding: "14px",
-                border: `1px dashed ${colors.borderActive}`, textAlign: "center",
-              }}>
-                <span style={{ fontSize: 13, color: colors.textTertiary }}>
-                  아직 받은 쿠폰이 없어요. {partnerDisplayName}님이 보내면 여기에 표시돼요!
-                </span>
-              </div>
-            )}
-          </div>
-        );
-      })()}
+      </div>
 
       {/* Confetti Overlay */}
       {showConfetti && (
@@ -1738,36 +1784,6 @@ JSON 형식:
           ))}
         </div>
       )}
-
-
-      {/* ═══ Block 4: 말랑 도구 (대화도우미만) ═══ */}
-      <div style={{ marginBottom: 16 }}>
-        <h3 style={{ fontSize: 15, fontWeight: 700, color: colors.text, marginBottom: 10 }}>💬 말랑 도구</h3>
-        <button onClick={() => {
-          if (!user.surveyCompleted) {
-            setShowSurveyPrompt(true);
-            return;
-          }
-          setShowConflictInput(true);
-        }} style={{
-          width: "100%", background: "#fff", border: `1px solid ${colors.border}`, borderRadius: 14,
-          padding: "14px 16px", cursor: "pointer", textAlign: "left",
-          boxShadow: colors.shadow, transition: "all 0.2s",
-          display: "flex", alignItems: "center", gap: 10,
-        }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-            background: colors.warmLight, display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            <MessageCircle size={18} color={colors.warm} />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 14, fontWeight: 700, color: colors.text }}>대화 도우미</div>
-            <div style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>하고 싶은 말을 AI가 부드럽게 바꿔드려요</div>
-          </div>
-          <ChevronRight size={16} color={colors.textTertiary} />
-        </button>
-      </div>
 
       {/* Survey Required Prompt */}
       {showSurveyPrompt && (
