@@ -57,6 +57,7 @@ export default function MallangApp() {
     secretMessages: ctxSecretMessages,
     unreadSecretMessage: ctxUnreadSecretMessage,
     judgeRecords: ctxJudgeRecords,
+    grapeTransactions: ctxGrapeTransactions,
   } = useCouple();
 
   const [loginError, setLoginError] = useState(null);
@@ -135,6 +136,7 @@ export default function MallangApp() {
   const [adWatching, setAdWatching] = useState(false);
   const [adRound, setAdRound] = useState(1); // 1 or 2
   const [reportFreeUsed, setReportFreeUsed] = useState(false); // first view is free
+  const [basicReportExpand, setBasicReportExpand] = useState(null); // 'grape'|'praise'|'predict'|null
   const [reportTodayUnlocked, setReportTodayUnlocked] = useState(false); // unlocked for this session
   const [voiceUnlocked, setVoiceUnlocked] = useState(false); // 대화 분석 잠금 해제
   const [judgeUnlocked, setJudgeUnlocked] = useState(false); // 갈등 심판 잠금 해제
@@ -3520,205 +3522,252 @@ JSON 형식:
       {/* ── 기본 보고서 ── */}
       {reportSubTab === "report" && (<>
         {(() => {
-          // 점수 계산
-          const { calcGottmanRatio, calcCommunicationScore, calcCompatibilityScore, calcConflictScore, calcAffectionScore, calcOverallScore, getDateRange, getPrevDateRange } = require('./services/analyticsScoreService');
           const now = new Date();
-          const dateRange = getDateRange(now.getFullYear(), now.getMonth() + 1);
-          const prevDateRange = getPrevDateRange(now.getFullYear(), now.getMonth() + 1);
+          const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+          const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+          const lastMonth = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
+          const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
 
-          // dailyQuestions 데이터는 현재 오늘 것만 있으므로 빈 배열로 시작
-          const dailyQuestionsData = ctxDailyQuestion ? [ctxDailyQuestion] : [];
+          // 포도알 거래 내역
+          const transactions = (ctxGrapeTransactions || [])
+            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
-          const scoreParams = {
-            uid: authUser?.uid,
-            partnerUid: ctxPartnerUid,
-            dateRange,
-            praises: ctxPraises || [],
-            secretMessages: ctxSecretMessages || [],
-            coupons: ctxCoupons || [],
-            dailyQuestions: dailyQuestionsData,
-            judgeRecords: ctxJudgeRecords || [],
-            streak: ctxStreak || { current: 0 },
-            aiTransformHistory: conversationHistory || [],
-            grapeBoards: grapeBoards || [],
+          const reasonLabels = {
+            daily_question: '오늘의 질문 완료',
+            daily_question_predict_correct: '질문 예측 적중',
+            grape_board_progress: '포도판 성공',
+            praise_send: '칭찬 보내기',
+            coupon_purchase: '쿠폰 구매',
+            gift_purchase: '선물 구매',
+            report_unlock: '심화 보고서 열람',
+            voice_analysis_unlock: '대화 분석 해금',
+            judge_unlock: '갈등 심판 해금',
           };
 
-          const gottman = calcGottmanRatio(scoreParams);
-          const communication = calcCommunicationScore(scoreParams);
-          const compatibility = calcCompatibilityScore(scoreParams);
-          const conflict = calcConflictScore({ ...scoreParams, prevDateRange });
-          const affection = calcAffectionScore(scoreParams);
-          const overall = calcOverallScore(communication, compatibility, conflict, affection);
+          // 이번 달 칭찬
+          const getDateStr = (item) => (item.createdAt || item.timestamp || item.dateStr || '').substring(0, 7);
+          const thisMonthPraises = (ctxPraises || []).filter(p => getDateStr(p) === thisMonth).length;
 
-          const categories = [
-            { key: 'comm', icon: '📊', label: '소통 활발도', score: communication.total, color: colors.primary, details: communication.details },
-            { key: 'compat', icon: '🎯', label: '취향 일치도', score: compatibility.total, color: colors.gold, details: compatibility.details },
-            { key: 'conflict', icon: '🕊️', label: '갈등 빈도', score: conflict.total, color: colors.mint, details: conflict.details },
-            { key: 'affection', icon: '💕', label: '애정 표현', score: affection.total, color: colors.rose, details: affection.details },
-          ];
+          // 월별 칭찬 집계
+          const praisesByMonth = (ctxPraises || []).reduce((acc, p) => {
+            const m = getDateStr(p);
+            if (m) acc[m] = (acc[m] || 0) + 1;
+            return acc;
+          }, {});
+          const praiseMonths = Object.entries(praisesByMonth).sort((a, b) => b[0].localeCompare(a[0]));
+
+          // 할일 완수율
+          const completedChores = (chores || []).filter(c => c.completed).length;
+          const totalChores = (chores || []).length;
+          const choreRate = totalChores > 0 ? Math.round((completedChores / totalChores) * 100) : 0;
+
+          // 커플 질문 예측 적중
+          const dailyQuestionsData = ctxDailyQuestion ? [ctxDailyQuestion] : [];
+          const thisMonthCorrect = dailyQuestionsData.filter(q => {
+            if (!q.id || !q.id.startsWith(thisMonth)) return false;
+            const predictions = q.predictions || {};
+            const answers = q.answers || {};
+            return predictions[authUser?.uid] && answers[ctxPartnerUid] &&
+              predictions[authUser?.uid].text === answers[ctxPartnerUid].text;
+          }).length;
+          const lastMonthCorrect = dailyQuestionsData.filter(q => {
+            if (!q.id || !q.id.startsWith(lastMonth)) return false;
+            const predictions = q.predictions || {};
+            const answers = q.answers || {};
+            return predictions[authUser?.uid] && answers[ctxPartnerUid] &&
+              predictions[authUser?.uid].text === answers[ctxPartnerUid].text;
+          }).length;
+          const thisMonthQuestionTotal = dailyQuestionsData.filter(q => q.id && q.id.startsWith(thisMonth) && (q.predictions || {})[authUser?.uid]).length;
+          const lastMonthQuestionTotal = dailyQuestionsData.filter(q => q.id && q.id.startsWith(lastMonth) && (q.predictions || {})[authUser?.uid]).length;
+
+          // 이번 달 기분 선택 비율
+          const thisMonthMoods = (moodHistory || []).filter(m => m.date && m.date.startsWith(thisMonth)).length;
+          const daysSoFar = now.getDate();
+          const moodRate = daysSoFar > 0 ? Math.round((thisMonthMoods / daysSoFar) * 100) : 0;
 
           return (<>
-          {/* ── 보유 포도알 ── */}
+          {/* ── ① 보유 포도알 ── */}
           <div style={{
-            display: "flex", alignItems: "center", gap: 10,
-            background: colors.grapeLight, borderRadius: 14, padding: "12px 16px",
-            marginTop: 12, marginBottom: 12,
-            border: `1px solid ${colors.grape}22`,
+            background: "#fff", borderRadius: 18, padding: "20px",
+            border: `1px solid ${colors.border}`, marginTop: 12, marginBottom: 12,
           }}>
-            <span style={{ fontSize: 28 }}>🍇</span>
-            <div>
-              <div style={{ fontSize: 11, color: colors.textSecondary, fontWeight: 600 }}>보유 포도알</div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: colors.grape }}>{user.grapePoints || 0}개</div>
-            </div>
-          </div>
-          {/* ── ① Gottman 5:1 비율 (최상단) ── */}
-          <div style={{
-            background: gottman.ratio >= 5
-              ? 'linear-gradient(135deg, #ECFDF5, #F0FDF4)'
-              : gottman.ratio >= 3
-              ? 'linear-gradient(135deg, #FFFBEB, #FEF3C7)'
-              : 'linear-gradient(135deg, #FFF1F2, #FFE4E6)',
-            borderRadius: 20, padding: "24px", marginTop: 12, marginBottom: 12,
-            border: `1px solid ${gottman.ratio >= 5 ? '#86EFAC' : gottman.ratio >= 3 ? '#FDE68A' : '#FECACA'}`,
-          }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: gottman.ratio >= 5 ? colors.mint : gottman.ratio >= 3 ? '#B45309' : colors.rose }}>
-                💜 Gottman 긍정:부정 비율
-              </span>
-              <button onClick={() => setShowGuideModal(true)} style={{
-                background: "rgba(0,0,0,0.06)", border: "none", borderRadius: 8,
-                padding: "4px 10px", fontSize: 11, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
-              }}>ℹ️ 가이드</button>
-            </div>
-            <div style={{ textAlign: "center", marginBottom: 12 }}>
-              <div style={{ fontSize: 42, fontWeight: 800, color: colors.text }}>
-                {gottman.negative > 0 ? `${gottman.ratio} : 1` : gottman.positive > 0 ? `${gottman.positive} : 0` : '- : -'}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 28 }}>🍇</span>
+                <div>
+                  <div style={{ fontSize: 11, color: colors.textSecondary, fontWeight: 600 }}>보유 포도알</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: colors.grape }}>{user.grapePoints || 0}개</div>
+                </div>
               </div>
-              <div style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4 }}>
-                긍정 {gottman.positive}회 · 부정 {gottman.negative}회
-              </div>
-            </div>
-            {/* 5:1 기준선 바 */}
-            <div style={{ position: "relative", height: 8, background: "#E5E7EB", borderRadius: 4, overflow: "visible" }}>
-              <div style={{
-                width: `${Math.min(100, (gottman.ratio / 10) * 100)}%`,
-                height: 8, borderRadius: 4,
-                background: gottman.ratio >= 5
-                  ? `linear-gradient(90deg, ${colors.mint}, #34D399)`
-                  : gottman.ratio >= 3
-                  ? 'linear-gradient(90deg, #FBBF24, #F59E0B)'
-                  : `linear-gradient(90deg, ${colors.rose}, #FB7185)`,
-              }} />
-              {/* 5:1 마커 */}
-              <div style={{
-                position: "absolute", top: -4, left: "50%",
-                width: 2, height: 16, background: colors.text, opacity: 0.3,
-              }} />
-              <span style={{
-                position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)",
-                fontSize: 9, color: colors.textTertiary,
-              }}>5:1</span>
-            </div>
-            <div style={{ marginTop: 20, background: "rgba(255,255,255,0.7)", borderRadius: 10, padding: "10px 12px" }}>
-              <p style={{ fontSize: 12, color: colors.textSecondary, lineHeight: 1.6, margin: 0 }}>
-                {gottman.ratio >= 5
-                  ? '아주 건강한 관계예요! 긍정적 교류가 충분해요 💕'
-                  : gottman.ratio >= 3
-                  ? '괜찮은 수준이에요. 칭찬과 몰래 한마디를 더 늘려보세요!'
-                  : gottman.negative === 0 && gottman.positive === 0
-                  ? '아직 데이터가 쌓이고 있어요. 활동하면 비율이 나타나요!'
-                  : '긍정 교류를 늘려보세요. 하루 칭찬 1번이면 크게 달라져요!'}
-              </p>
-              <p style={{ fontSize: 10, color: colors.textTertiary, marginTop: 6 }}>
-                📖 Gottman 박사 연구: 행복한 커플은 부정 1회당 긍정 5회 이상
-              </p>
-            </div>
-          </div>
-
-          {/* ── ② 종합 점수 ── */}
-          <div style={{
-            background: `linear-gradient(135deg, ${colors.primary}, ${colors.grape})`,
-            borderRadius: 20, padding: "24px", marginBottom: 12, textAlign: "center",
-          }}>
-            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>이번 달 종합 점수</p>
-            <div style={{ fontSize: 48, fontWeight: 800, color: "#fff" }}>{overall}</div>
-            <div style={{ height: 8, background: "rgba(255,255,255,0.2)", borderRadius: 4, marginTop: 12, overflow: "hidden" }}>
-              <div style={{
-                width: `${overall}%`, height: 8, borderRadius: 4,
-                background: "rgba(255,255,255,0.8)", transition: "width 0.5s",
-              }} />
-            </div>
-            <p style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 8 }}>
-              소통(30%) + 취향(25%) + 갈등(20%) + 애정(25%)
-            </p>
-          </div>
-
-          {/* ── ③ 4개 카테고리 ── */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 12 }}>
-            {categories.map(cat => (
-              <div key={cat.key} style={{
-                background: "#fff", borderRadius: 16, padding: "16px 18px",
-                border: `1px solid ${colors.border}`,
+              <button onClick={() => setBasicReportExpand(prev => prev === 'grape' ? null : 'grape')} style={{
+                background: colors.grapeLight, border: "none", borderRadius: 10,
+                padding: "8px 14px", fontSize: 12, fontWeight: 600, color: colors.grape, cursor: "pointer",
               }}>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 18 }}>{cat.icon}</span>
-                    <span style={{ fontSize: 14, fontWeight: 700, color: colors.text }}>{cat.label}</span>
-                  </div>
-                  <span style={{ fontSize: 18, fontWeight: 800, color: cat.color }}>{cat.score}<span style={{ fontSize: 12, fontWeight: 500, color: colors.textTertiary }}>/100</span></span>
-                </div>
-                <div style={{ height: 8, background: "#F3F4F6", borderRadius: 4, overflow: "hidden", marginBottom: 8 }}>
-                  <div style={{
-                    width: `${cat.score}%`, height: 8, borderRadius: 4,
-                    background: cat.color, transition: "width 0.5s",
-                  }} />
-                </div>
-                {/* 세부 항목 */}
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {Object.values(cat.details).map((d, i) => (
-                    <span key={i} style={{
-                      fontSize: 10, color: colors.textTertiary, background: "#F9FAFB",
-                      borderRadius: 6, padding: "3px 8px",
+                {basicReportExpand === 'grape' ? '접기' : '내역 보기'}
+              </button>
+            </div>
+            {basicReportExpand === 'grape' && (
+              <div style={{ marginTop: 14, maxHeight: 240, overflowY: "auto" }}>
+                {transactions.length > 0 ? transactions.slice(0, 30).map((tx, i) => (
+                  <div key={i} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "10px 0", borderBottom: i < Math.min(transactions.length, 30) - 1 ? `1px solid ${colors.border}` : "none",
+                  }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>
+                        {reasonLabels[tx.reason] || tx.reason || '포도알'}
+                      </div>
+                      <div style={{ fontSize: 11, color: colors.textTertiary }}>
+                        {tx.createdAt ? new Date(tx.createdAt).toLocaleDateString('ko-KR', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : ''}
+                      </div>
+                    </div>
+                    <span style={{
+                      fontSize: 15, fontWeight: 700,
+                      color: tx.type === 'earn' ? colors.mint : colors.rose,
                     }}>
-                      {d.label} {d.score}/{d.max}
+                      {tx.type === 'earn' ? '+' : ''}{tx.amount}
                     </span>
-                  ))}
-                </div>
+                  </div>
+                )) : (
+                  <p style={{ fontSize: 13, color: colors.textTertiary, textAlign: "center", padding: "16px 0" }}>
+                    아직 내역이 없어요
+                  </p>
+                )}
               </div>
-            ))}
+            )}
           </div>
 
-          {/* ── ④ 팁 ── */}
+          {/* ── ② 이번 달 칭찬 ── */}
           <div style={{
-            background: colors.primaryLight, borderRadius: 14, padding: "16px",
-            border: `1px solid ${colors.primary}30`, marginBottom: 12,
+            background: "#fff", borderRadius: 18, padding: "20px",
+            border: `1px solid ${colors.border}`, marginBottom: 12,
           }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: colors.primary, marginBottom: 8 }}>💡 점수 올리는 팁</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {communication.total < 50 && (
-                <p style={{ fontSize: 12, color: colors.textSecondary, lineHeight: 1.5, margin: 0 }}>
-                  ✓ 매일 오늘의 질문에 참여하고 칭찬을 보내보세요
-                </p>
-              )}
-              {compatibility.total < 50 && (
-                <p style={{ fontSize: 12, color: colors.textSecondary, lineHeight: 1.5, margin: 0 }}>
-                  ✓ 질문 예측을 적극 활용하면 서로를 더 잘 알 수 있어요
-                </p>
-              )}
-              {affection.total < 50 && (
-                <p style={{ fontSize: 12, color: colors.textSecondary, lineHeight: 1.5, margin: 0 }}>
-                  ✓ 몰래 한마디와 쿠폰으로 마음을 표현해보세요
-                </p>
-              )}
-              {overall >= 70 && (
-                <p style={{ fontSize: 12, color: colors.textSecondary, lineHeight: 1.5, margin: 0 }}>
-                  ✓ 좋은 흐름이에요! 이 페이스를 유지하면 관계가 더 깊어져요
-                </p>
-              )}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 28 }}>💜</span>
+                <div>
+                  <div style={{ fontSize: 11, color: colors.textSecondary, fontWeight: 600 }}>이번 달 칭찬</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: colors.primary }}>{thisMonthPraises}회</div>
+                </div>
+              </div>
+              <button onClick={() => setBasicReportExpand(prev => prev === 'praise' ? null : 'praise')} style={{
+                background: colors.primaryLight, border: "none", borderRadius: 10,
+                padding: "8px 14px", fontSize: 12, fontWeight: 600, color: colors.primary, cursor: "pointer",
+              }}>
+                {basicReportExpand === 'praise' ? '접기' : '월별 보기'}
+              </button>
+            </div>
+            {basicReportExpand === 'praise' && (
+              <div style={{ marginTop: 14 }}>
+                {praiseMonths.length > 0 ? praiseMonths.map(([month, count]) => (
+                  <div key={month} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "8px 0", borderBottom: `1px solid ${colors.border}`,
+                  }}>
+                    <span style={{ fontSize: 13, color: colors.text }}>
+                      {(() => { const [y, m] = month.split('-'); return `${y}년 ${parseInt(m)}월`; })()}
+                    </span>
+                    <span style={{ fontSize: 15, fontWeight: 700, color: colors.primary }}>{count}회</span>
+                  </div>
+                )) : (
+                  <p style={{ fontSize: 13, color: colors.textTertiary, textAlign: "center", padding: "16px 0" }}>
+                    아직 칭찬 기록이 없어요
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* ── ③ 할일 완수율 ── */}
+          <div style={{
+            background: "#fff", borderRadius: 18, padding: "20px",
+            border: `1px solid ${colors.border}`, marginBottom: 12,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 28 }}>✅</span>
+              <div>
+                <div style={{ fontSize: 11, color: colors.textSecondary, fontWeight: 600 }}>한 달간 할일 완수율</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: colors.mint }}>{choreRate}%</div>
+              </div>
+            </div>
+            <div style={{ height: 10, background: "#F3F4F6", borderRadius: 5, overflow: "hidden" }}>
+              <div style={{
+                width: `${choreRate}%`, height: 10, borderRadius: 5,
+                background: `linear-gradient(90deg, ${colors.mint}, #34D399)`,
+                transition: "width 0.5s",
+              }} />
+            </div>
+            <div style={{ fontSize: 12, color: colors.textSecondary, marginTop: 8 }}>
+              {completedChores} / {totalChores} 완료
+              {totalChores === 0 && ' · 할일을 등록해보세요!'}
             </div>
           </div>
 
-          {/* Support 버튼 (클릭시 광고) */}
+          {/* ── ④ 커플 질문 예측 적중 ── */}
+          <div style={{
+            background: "#fff", borderRadius: 18, padding: "20px",
+            border: `1px solid ${colors.border}`, marginBottom: 12,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 28 }}>🎯</span>
+                <div>
+                  <div style={{ fontSize: 11, color: colors.textSecondary, fontWeight: 600 }}>이번 달 질문 예측 적중</div>
+                  <div style={{ fontSize: 22, fontWeight: 800, color: colors.gold }}>
+                    {thisMonthCorrect}회
+                    {thisMonthQuestionTotal > 0 && <span style={{ fontSize: 13, fontWeight: 500, color: colors.textTertiary }}> / {thisMonthQuestionTotal}번 중</span>}
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setBasicReportExpand(prev => prev === 'predict' ? null : 'predict')} style={{
+                background: colors.goldLight, border: "none", borderRadius: 10,
+                padding: "8px 14px", fontSize: 12, fontWeight: 600, color: colors.gold, cursor: "pointer",
+              }}>
+                {basicReportExpand === 'predict' ? '접기' : '지난달'}
+              </button>
+            </div>
+            {basicReportExpand === 'predict' && (
+              <div style={{
+                marginTop: 14, background: colors.goldLight, borderRadius: 12, padding: "14px 16px",
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 13, color: colors.text }}>
+                    {(() => { return `${lastMonthDate.getFullYear()}년 ${lastMonthDate.getMonth() + 1}월`; })()}
+                  </span>
+                  <span style={{ fontSize: 15, fontWeight: 700, color: colors.gold }}>
+                    {lastMonthCorrect}회
+                    {lastMonthQuestionTotal > 0 && <span style={{ fontSize: 12, fontWeight: 500, color: colors.textTertiary }}> / {lastMonthQuestionTotal}번 중</span>}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* ── ⑤ 이번 달 기분 선택 비율 ── */}
+          <div style={{
+            background: "#fff", borderRadius: 18, padding: "20px",
+            border: `1px solid ${colors.border}`, marginBottom: 12,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <span style={{ fontSize: 28 }}>😊</span>
+              <div>
+                <div style={{ fontSize: 11, color: colors.textSecondary, fontWeight: 600 }}>이번 달 기분 기록률</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: colors.warm }}>{moodRate}%</div>
+              </div>
+            </div>
+            <div style={{ height: 10, background: "#F3F4F6", borderRadius: 5, overflow: "hidden" }}>
+              <div style={{
+                width: `${moodRate}%`, height: 10, borderRadius: 5,
+                background: `linear-gradient(90deg, ${colors.warm}, #FB923C)`,
+                transition: "width 0.5s",
+              }} />
+            </div>
+            <div style={{ fontSize: 12, color: colors.textSecondary, marginTop: 8 }}>
+              {daysSoFar}일 중 {thisMonthMoods}일 기록
+            </div>
+          </div>
+
+          {/* Support 버튼 */}
           <button onClick={() => { setAdModalType("support"); setShowAdModal(true); }} style={{
             width: "100%", marginTop: 14,
             background: "#F8F5FF", borderRadius: 14, padding: "16px 18px",
@@ -4073,7 +4122,113 @@ JSON 형식:
               const completedChores = chores.filter(c => c.completed).length;
               const totalChoresCount = chores.length;
 
+              // 분석 점수 계산
+              const { calcGottmanRatio, calcCommunicationScore, calcCompatibilityScore, calcConflictScore, calcAffectionScore, calcOverallScore, getDateRange, getPrevDateRange } = require('./services/analyticsScoreService');
+              const [selYear, selMonth] = selectedReportMonth.split('-').map(Number);
+              const dateRange = getDateRange(selYear, selMonth);
+              const prevDateRange = getPrevDateRange(selYear, selMonth);
+              const dailyQuestionsData = ctxDailyQuestion ? [ctxDailyQuestion] : [];
+              const scoreParams = {
+                uid: authUser?.uid, partnerUid: ctxPartnerUid, dateRange,
+                praises: ctxPraises || [], secretMessages: ctxSecretMessages || [],
+                coupons: ctxCoupons || [], dailyQuestions: dailyQuestionsData,
+                judgeRecords: ctxJudgeRecords || [], streak: ctxStreak || { current: 0 },
+                aiTransformHistory: conversationHistory || [], grapeBoards: grapeBoards || [],
+              };
+              const gottman = calcGottmanRatio(scoreParams);
+              const communication = calcCommunicationScore(scoreParams);
+              const compatibility = calcCompatibilityScore(scoreParams);
+              const conflict = calcConflictScore({ ...scoreParams, prevDateRange });
+              const affection = calcAffectionScore(scoreParams);
+              const overall = calcOverallScore(communication, compatibility, conflict, affection);
+              const categories = [
+                { key: 'comm', icon: '📊', label: '소통 활발도', score: communication.total, color: colors.primary, details: communication.details },
+                { key: 'compat', icon: '🎯', label: '취향 일치도', score: compatibility.total, color: colors.gold, details: compatibility.details },
+                { key: 'conflict', icon: '🕊️', label: '갈등 빈도', score: conflict.total, color: colors.mint, details: conflict.details },
+                { key: 'affection', icon: '💕', label: '애정 표현', score: affection.total, color: colors.rose, details: affection.details },
+              ];
+
               return (<>
+            {/* ═══ Gottman 5:1 비율 ═══ */}
+            <div style={{
+              background: gottman.ratio >= 5
+                ? 'linear-gradient(135deg, #ECFDF5, #F0FDF4)'
+                : gottman.ratio >= 3
+                ? 'linear-gradient(135deg, #FFFBEB, #FEF3C7)'
+                : 'linear-gradient(135deg, #FFF1F2, #FFE4E6)',
+              borderRadius: 20, padding: "24px", marginBottom: 14,
+              border: `1px solid ${gottman.ratio >= 5 ? '#86EFAC' : gottman.ratio >= 3 ? '#FDE68A' : '#FECACA'}`,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <span style={{ fontSize: 13, fontWeight: 700, color: gottman.ratio >= 5 ? colors.mint : gottman.ratio >= 3 ? '#B45309' : colors.rose }}>
+                  💜 Gottman 긍정:부정 비율
+                </span>
+                <button onClick={() => setShowGuideModal(true)} style={{
+                  background: "rgba(0,0,0,0.06)", border: "none", borderRadius: 8,
+                  padding: "4px 10px", fontSize: 11, fontWeight: 600, color: colors.textSecondary, cursor: "pointer",
+                }}>ℹ️ 가이드</button>
+              </div>
+              <div style={{ textAlign: "center", marginBottom: 12 }}>
+                <div style={{ fontSize: 42, fontWeight: 800, color: colors.text }}>
+                  {gottman.negative > 0 ? `${gottman.ratio} : 1` : gottman.positive > 0 ? `${gottman.positive} : 0` : '- : -'}
+                </div>
+                <div style={{ fontSize: 12, color: colors.textSecondary, marginTop: 4 }}>
+                  긍정 {gottman.positive}회 · 부정 {gottman.negative}회
+                </div>
+              </div>
+              <div style={{ position: "relative", height: 8, background: "#E5E7EB", borderRadius: 4, overflow: "visible" }}>
+                <div style={{
+                  width: `${Math.min(100, (gottman.ratio / 10) * 100)}%`, height: 8, borderRadius: 4,
+                  background: gottman.ratio >= 5 ? `linear-gradient(90deg, ${colors.mint}, #34D399)` : gottman.ratio >= 3 ? 'linear-gradient(90deg, #FBBF24, #F59E0B)' : `linear-gradient(90deg, ${colors.rose}, #FB7185)`,
+                }} />
+                <div style={{ position: "absolute", top: -4, left: "50%", width: 2, height: 16, background: colors.text, opacity: 0.3 }} />
+                <span style={{ position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)", fontSize: 9, color: colors.textTertiary }}>5:1</span>
+              </div>
+              <div style={{ marginTop: 20, background: "rgba(255,255,255,0.7)", borderRadius: 10, padding: "10px 12px" }}>
+                <p style={{ fontSize: 12, color: colors.textSecondary, lineHeight: 1.6, margin: 0 }}>
+                  {gottman.ratio >= 5 ? '아주 건강한 관계예요! 긍정적 교류가 충분해요 💕' : gottman.ratio >= 3 ? '괜찮은 수준이에요. 칭찬과 몰래 한마디를 더 늘려보세요!' : gottman.negative === 0 && gottman.positive === 0 ? '아직 데이터가 쌓이고 있어요. 활동하면 비율이 나타나요!' : '긍정 교류를 늘려보세요. 하루 칭찬 1번이면 크게 달라져요!'}
+                </p>
+              </div>
+            </div>
+
+            {/* ═══ 종합 점수 ═══ */}
+            <div style={{
+              background: `linear-gradient(135deg, ${colors.primary}, ${colors.grape})`,
+              borderRadius: 20, padding: "24px", marginBottom: 14, textAlign: "center",
+            }}>
+              <p style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>종합 점수</p>
+              <div style={{ fontSize: 48, fontWeight: 800, color: "#fff" }}>{overall}</div>
+              <div style={{ height: 8, background: "rgba(255,255,255,0.2)", borderRadius: 4, marginTop: 12, overflow: "hidden" }}>
+                <div style={{ width: `${overall}%`, height: 8, borderRadius: 4, background: "rgba(255,255,255,0.8)", transition: "width 0.5s" }} />
+              </div>
+              <p style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginTop: 8 }}>소통(30%) + 취향(25%) + 갈등(20%) + 애정(25%)</p>
+            </div>
+
+            {/* ═══ 4개 카테고리 ═══ */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 14 }}>
+              {categories.map(cat => (
+                <div key={cat.key} style={{ background: "#fff", borderRadius: 16, padding: "16px 18px", border: `1px solid ${colors.border}` }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 18 }}>{cat.icon}</span>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: colors.text }}>{cat.label}</span>
+                    </div>
+                    <span style={{ fontSize: 18, fontWeight: 800, color: cat.color }}>{cat.score}<span style={{ fontSize: 12, fontWeight: 500, color: colors.textTertiary }}>/100</span></span>
+                  </div>
+                  <div style={{ height: 8, background: "#F3F4F6", borderRadius: 4, overflow: "hidden", marginBottom: 8 }}>
+                    <div style={{ width: `${cat.score}%`, height: 8, borderRadius: 4, background: cat.color, transition: "width 0.5s" }} />
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {Object.values(cat.details).map((d, i) => (
+                      <span key={i} style={{ fontSize: 10, color: colors.textTertiary, background: "#F9FAFB", borderRadius: 6, padding: "3px 8px" }}>
+                        {d.label} {d.score}/{d.max}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
             {/* ═══ 이번 달 활동 요약 ═══ */}
             <div style={{
               background: "#fff", borderRadius: 18, padding: "20px",
