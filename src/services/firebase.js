@@ -1,5 +1,5 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import { getAuth, GoogleAuthProvider, OAuthProvider } from 'firebase/auth';
 import {
   getFirestore,
   doc,
@@ -39,6 +39,7 @@ let app = null;
 let auth = null;
 let db = null;
 let googleProvider = null;
+let appleProvider = null;
 
 try {
   if (firebaseConfig.apiKey) {
@@ -46,6 +47,10 @@ try {
     auth = getAuth(app);
     db = getFirestore(app);
     googleProvider = new GoogleAuthProvider();
+    appleProvider = new OAuthProvider('apple.com');
+    appleProvider.addScope('email');
+    appleProvider.addScope('name');
+    appleProvider.setCustomParameters({ locale: 'ko' });
   }
 } catch (error) {
   console.error('Firebase initialization error:', error);
@@ -56,6 +61,7 @@ export {
   auth,
   db,
   googleProvider,
+  appleProvider,
   // Firestore functions
   doc,
   setDoc,

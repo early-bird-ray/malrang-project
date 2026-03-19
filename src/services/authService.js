@@ -1,5 +1,5 @@
 import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
-import { auth, googleProvider } from './firebase';
+import { auth, googleProvider, appleProvider } from './firebase';
 
 // 구글 로그인
 export const signInWithGoogle = async () => {
@@ -11,6 +11,20 @@ export const signInWithGoogle = async () => {
     return { user: result.user, error: null };
   } catch (error) {
     console.error('Google sign in error:', error);
+    return { user: null, error: error.message };
+  }
+};
+
+// 애플 로그인
+export const signInWithApple = async () => {
+  if (!auth || !appleProvider) {
+    return { user: null, error: 'Firebase가 초기화되지 않았습니다' };
+  }
+  try {
+    const result = await signInWithPopup(auth, appleProvider);
+    return { user: result.user, error: null };
+  } catch (error) {
+    console.error('Apple sign in error:', error);
     return { user: null, error: error.message };
   }
 };
